@@ -46,6 +46,9 @@ Or double-click `run.bat` on Windows.
 
 ## Credits
 
+### Development
+This game was created almost entirely by a non-engineer using **Antigravity** and **Gemini** AI tools (except for the BGM).
+
 ### BGM
 Music by d-elf.com (Experimental Model)  
 https://www.d-elf.com/archives/4196.html
