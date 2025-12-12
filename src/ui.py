@@ -265,13 +265,15 @@ class UI:
         
         # Ranking Entries
         start_y = 270
+        ordinals = ["1st", "2nd", "3rd", "4th", "5th"]
         for i, score in enumerate(ranking_data):
             color = (255, 255, 255)
             # Highlight current score (simple float comparison)
             if abs(score - total_time) < 0.001: 
                 color = (255, 255, 0) 
             
-            entry = self.font.render(f"{i+1}. {score:.2f}", True, color)
+            rank_str = ordinals[i] if i < len(ordinals) else f"{i+1}th"
+            entry = self.font.render(f"{rank_str} {score:.2f}", True, color)
             entry_rect = entry.get_rect(center=(self.screen_width/2, start_y + i * 40))
             screen.blit(entry, entry_rect)
             
