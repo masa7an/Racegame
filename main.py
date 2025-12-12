@@ -1,5 +1,5 @@
-# v23_stable
-# 2025-12-11
+# v24_stable
+# 2025-12-12
 import pygame
 import sys
 import os
@@ -64,7 +64,7 @@ def main():
     pygame.init()
     pygame.mixer.init(frequency=44100, size=-16, channels=2)
     screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
-    pygame.display.set_caption("Race Game v23_stable")
+    pygame.display.set_caption("Race Game v24_stable")
     clock = pygame.time.Clock()
     font = pygame.font.Font(None, HUD_FONT_SIZE)
 
