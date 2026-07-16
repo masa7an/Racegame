@@ -42,6 +42,17 @@ TUNNEL_FOG_COLOR = (14, 14, 17)                    # トンネル奥の到達色
 TUNNEL_PORTAL_THICKNESS = 170.0                    # 小口の厚み（world units。ROAD_WORLD_WIDTH=約10m換算で約50cm）
 TUNNEL_PORTAL_COLOR = (120, 118, 122)              # 小口面の色（外光に照らされたコンクリート想定）
 
+# Tunnel Mountain (坑口の周りの山 — docs/tunnel_requirements.md 14節)
+# 入口面に貼る平面シルエット1枚。アーチの根元は路面（＝山の裾と同じ平面）に接しているので、
+# 開口部は「穴」ではなく下辺の切り欠きになり、外周の稜線→アーチ輪郭を逆順、と一筆でたどれる
+# 単純多角形で描ける（pygameは穴あきポリゴンを描けないので、この性質に頼っている）。
+MOUNTAIN_HALF_WIDTH = 20000.0     # 中心から裾までの距離（world units）。接近時に裾を画面へ入れない幅
+MOUNTAIN_HEIGHT = 8000.0          # 稜線の最大高さ（路面から。接近時に画面上部を覆う）
+MOUNTAIN_COLOR = (46, 74, 44)     # 山肌の色（背景の地面と馴染む暗めの緑、単色）
+MOUNTAIN_SEED = 6                 # 稜線の形を固定する乱数シード（毎フレーム同じ形）
+MOUNTAIN_DETAIL_LEVELS = 5        # 稜線の分割段数（midpoint displacement。2^N+1 点になる）
+MOUNTAIN_ROUGHNESS = 0.35         # 稜線が包絡線から凹んでよい最大割合（0=なめらかな釣鐘、1=激しくギザギザ）
+
 # Tunnel Ceiling Lights (天井ライト — 装飾のみ、路面への影響なし)
 # 左右2灯に分離。弧のファセット分割とは独立した角度で自由に配置・サイズ調整する。
 TUNNEL_LIGHT_COLOR = (255, 130, 30)                # ライトの色（オレンジ寄りの暖色系）
@@ -146,7 +157,37 @@ class Track:
         self._tunnel_glow_surf = None   # 天井ライトの発光用Surface（ライト本体のみを描き、ブラーの入力にする）
         self._tunnel_glow_size = (0, 0)
         self._glow_scratch = {}         # ブラーの縮小/拡大に使うSurfaceのキャッシュ
-    
+        self._mountain_ridge = Track._build_mountain_ridge()  # 坑口の山の稜線（世界座標、形は毎フレーム同じ）
+
+    @staticmethod
+    def _build_mountain_ridge():
+        """坑口の山の稜線を世界座標の (x, y) 列で返す（左の裾 → 右の裾）。
+
+        釣鐘状の包絡線に midpoint displacement のノイズを掛けて凹ませる。掛け算にしているので、
+        裾（包絡線=0）は必ず地面へ戻り、高さも包絡線を超えない＝画面を覆う量を包絡線側だけで見積もれる。
+        """
+        rnd = random.Random(MOUNTAIN_SEED)
+        noise = [rnd.random(), rnd.random()]
+        amp = 1.0
+        for _ in range(MOUNTAIN_DETAIL_LEVELS):
+            refined = [noise[0]]
+            for i in range(len(noise) - 1):
+                mid = (noise[i] + noise[i + 1]) / 2 + rnd.uniform(-amp, amp)
+                refined.append(max(0.0, min(1.0, mid)))
+                refined.append(noise[i + 1])
+            noise = refined
+            amp *= 0.5   # 段を追うごとに揺れを半分にする（細部ほど小さい凹凸になる）
+
+        ridge = []
+        last = len(noise) - 1
+        for i, v in enumerate(noise):
+            t = i / last
+            x = -MOUNTAIN_HALF_WIDTH + 2 * MOUNTAIN_HALF_WIDTH * t
+            envelope = MOUNTAIN_HEIGHT * 0.5 * (1 - math.cos(2 * math.pi * t))
+            ridge.append((x, envelope * (1.0 - MOUNTAIN_ROUGHNESS * v)))
+        return ridge
+
+
     def project(self, world_x, world_y, world_z, road_offset, screen_width, screen_height):
         if world_z <= 0: return None
         scale = PROJECTION_PLANE_DIST / world_z
@@ -849,6 +890,21 @@ class Track:
                      portal_color = Track.interpolate_color(TUNNEL_PORTAL_COLOR, fog_color, fog_pct)
                      out_hw = TUNNEL_HALF_WIDTH + TUNNEL_PORTAL_THICKNESS
                      out_h = TUNNEL_HEIGHT + TUNNEL_PORTAL_THICKNESS
+
+                     # ===== 山（坑口の周りの地形 — 14節） =====
+                     # 入口面上の1枚の多角形。左の裾→稜線→右の裾→右のアーチ根元→小口リングの外枠を
+                     # たどって左のアーチ根元、と一筆で閉じる。切り欠きを坑内の弧ではなくリングの外枠
+                     # (out_hw/out_h)に合わせるので、山とアーチの間に小口の帯が残り「山肌に開いた坑口」に見える。
+                     # 分割数は弧と同じarc_nを共有する（13-2: ここだけ変えると継ぎ目に隙間が出る）。
+                     # 坑外なのでフォグは暗闇ではなく通常のfog_colorへ寄せる（小口面と同じ扱い）。
+                     # 坑内アーチ・ライトの後に描くので山が坑内を塞ぎ、この後のリングが開口部を縁取る。
+                     mountain_color = Track.interpolate_color(MOUNTAIN_COLOR, fog_color, fog_pct)
+                     mountain_poly = [(x1 + mx * s1, y1 - my * s1) for mx, my in self._mountain_ridge]
+                     for k in range(arc_n + 1):
+                         mountain_poly.append(
+                             tunnel_arc_pt(math.pi * k / arc_n, x1, y1, s1, out_hw, out_h))
+                     pygame.draw.polygon(screen, mountain_color, mountain_poly)
+
                      for k in range(arc_n):
                          t0 = math.pi * k / arc_n
                          t1 = math.pi * (k + 1) / arc_n
