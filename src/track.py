@@ -25,19 +25,24 @@ EDGE_ROUGHNESS_AMOUNT = 22.0    # でこぼこの最大ピクセル数
 # Tunnel Settings (Stage6 単発ギミック — docs/tunnel_requirements.md 参照)
 # 断面は半楕円（円柱を横に半分に割った形）。TUNNEL_HEIGHTとTUNNEL_HALF_WIDTHが
 # 弧の縦横それぞれの半径にあたる（両者が等しければ真円の半分になる）。
-TUNNEL_HEIGHT = 3000.0                             # 路面からアーチ頂点までの高さ（world units）
-TUNNEL_HALF_WIDTH = ROAD_WORLD_WIDTH / 2 * 1.15    # 中心からアーチ両端（路面との接点）までの距離
+TUNNEL_HEIGHT = 2400.0                             # 路面からアーチ頂点までの高さ（world units）
+TUNNEL_HALF_WIDTH = ROAD_WORLD_WIDTH / 2 * 1.4     # 中心からアーチ両端（路面との接点）までの距離
 TUNNEL_ARC_SEGMENTS = 8                            # 弧を近似するポリゴン分割数
 TUNNEL_ARCH_COLOR = (55, 53, 57)                   # アーチ全体の色（単色、陰影なし）
+TUNNEL_FLOOR_COLOR = (72, 70, 74)                  # 路肩の床色（コンクリート想定。道路端〜アーチ根元を埋める）
 TUNNEL_FOG_COLOR = (14, 14, 17)                    # トンネル奥の到達色（通常フォグの代わりに暗闇へフェード）
 
 # Tunnel Ceiling Lights (天井ライト — 装飾のみ、路面への影響なし)
 # 左右2灯に分離。弧のファセット分割(TUNNEL_ARC_SEGMENTS)とは独立した角度で自由に配置・サイズ調整する。
-TUNNEL_LIGHT_COLOR = (255, 225, 150)               # ライトの色（暖色系）
-TUNNEL_LIGHT_CENTER_OFFSET = math.radians(20.0)    # アーチ頂点(theta=90°)から左右ライト中心までの角度
-TUNNEL_LIGHT_HALF_ANGLE = math.radians(7.0)        # 各ライトの半幅角度（小さめサイズ）
+TUNNEL_LIGHT_COLOR = (255, 130, 30)                # ライトの色（オレンジ寄りの暖色系）
+TUNNEL_LIGHT_CENTER_OFFSET = math.radians(27.0)    # アーチ頂点(theta=90°)から左右ライト中心までの角度
+TUNNEL_LIGHT_HALF_ANGLE = math.radians(2.8)        # 各ライトの半幅角度（小さめサイズ）
 TUNNEL_LIGHT_SPACING = 4                           # ライトの周期（セグメント数）
 TUNNEL_LIGHT_ON_LENGTH = 2                          # 周期のうち点灯させるセグメント数（密な配置）
+TUNNEL_LIGHT_GLOW_HALF_ANGLE_OUTER = TUNNEL_LIGHT_HALF_ANGLE * 3.5  # グロー外側レイヤーの広がり角度
+TUNNEL_LIGHT_GLOW_HALF_ANGLE_INNER = TUNNEL_LIGHT_HALF_ANGLE * 1.8  # グロー内側レイヤーの広がり角度
+TUNNEL_LIGHT_GLOW_ALPHA_OUTER = 45                 # グロー外側の強さ（加算合成、0-255）
+TUNNEL_LIGHT_GLOW_ALPHA_INNER = 100                # グロー内側の強さ（加算合成、0-255）
 
 PROJECTION_PLANE_DIST = 300.0
 HORIZON_Y = 300
@@ -124,6 +129,8 @@ class Track:
         self.goal_distance = GOAL_DISTANCE
         self.goal_distance = GOAL_DISTANCE
         self.stripe_length = STRIPE_LENGTH
+        self._tunnel_glow_surf = None   # 天井ライトのグロー用オーバーレイ（毎フレーム再利用、サイズ変化時のみ再作成）
+        self._tunnel_glow_size = (0, 0)
     
     def project(self, world_x, world_y, world_z, road_offset, screen_width, screen_height):
         if world_z <= 0: return None
@@ -398,6 +405,15 @@ class Track:
             render_points[-1]['y_world'] = actual_y
 
             
+        # トンネル天井ライトのグロー用オーバーレイ（加算合成、毎フレーム透明にクリアして再利用）
+        tunnel_glow_surf = None
+        if tunnel_start is not None:
+            if self._tunnel_glow_surf is None or self._tunnel_glow_size != (screen_width, screen_height):
+                self._tunnel_glow_surf = pygame.Surface((screen_width, screen_height), pygame.SRCALPHA)
+                self._tunnel_glow_size = (screen_width, screen_height)
+            tunnel_glow_surf = self._tunnel_glow_surf
+            tunnel_glow_surf.fill((0, 0, 0, 0))
+
         # Draw Back-to-Front
         for i in range(max_idx, start_idx - 1, -1):
              if i >= len(self.segments): continue
@@ -522,10 +538,20 @@ class Track:
              else:
                  jitter_left_1 = jitter_right_1 = jitter_left_2 = jitter_right_2 = 0
              
+             # ===== Tunnel Floor (路肩のコンクリート床 — Stage6 ギミック) =====
+             # アーチの根元（±TUNNEL_HALF_WIDTH）まで床を敷き、道路端の外に見えていた
+             # 背景の地面（草）を隠す。道路ポリゴンより先に描き、路面・縁石で中央を上書きさせる。
+             if in_tunnel:
+                 floor_color = Track.interpolate_color(TUNNEL_FLOOR_COLOR, TUNNEL_FOG_COLOR, fog_pct)
+                 fw1 = TUNNEL_HALF_WIDTH * s1
+                 fw2 = TUNNEL_HALF_WIDTH * s2
+                 pygame.draw.polygon(screen, floor_color, [
+                     (x2 - fw2, y2), (x2 + fw2, y2), (x1 + fw1, y1), (x1 - fw1, y1)])
+
              poly = [
-                 (x2 - w2/2 + jitter_left_2, y2), 
-                 (x2 + w2/2 + jitter_right_2, y2), 
-                 (x1 + w1/2 + jitter_right_1, y1), 
+                 (x2 - w2/2 + jitter_left_2, y2),
+                 (x2 + w2/2 + jitter_right_2, y2),
+                 (x1 + w1/2 + jitter_right_1, y1),
                  (x1 - w1/2 + jitter_left_1, y1)
              ]
              pygame.draw.polygon(screen, poly_color, poly)
@@ -716,6 +742,7 @@ class Track:
                  light_on = (seg['index'] % TUNNEL_LIGHT_SPACING) < TUNNEL_LIGHT_ON_LENGTH
                  if light_on:
                      light_color = Track.interpolate_color(TUNNEL_LIGHT_COLOR, TUNNEL_FOG_COLOR, fog_pct)
+                     glow_fade = max(0.0, 1.0 - fog_pct)  # 奥のライトほどグローも弱める
                      for side in (-1, 1):
                          center_theta = math.pi / 2 + side * TUNNEL_LIGHT_CENTER_OFFSET
                          t0 = center_theta - TUNNEL_LIGHT_HALF_ANGLE
@@ -723,6 +750,20 @@ class Track:
                          pygame.draw.polygon(screen, light_color, [
                              tunnel_arc_pt(t0, x1, y1, s1), tunnel_arc_pt(t1, x1, y1, s1),
                              tunnel_arc_pt(t1, x2, y2, s2), tunnel_arc_pt(t0, x2, y2, s2)])
+
+                         # グロー（にじみ）: 別オーバーレイに本体より広い角度で二段階の半透明レイヤーを重ね、
+                         # ループ後に加算合成でスクリーンへ一括blit（car.pyのヘッドライトグローと同じ手法）
+                         if tunnel_glow_surf is not None and glow_fade > 0.02:
+                             for half_angle, base_alpha in (
+                                 (TUNNEL_LIGHT_GLOW_HALF_ANGLE_OUTER, TUNNEL_LIGHT_GLOW_ALPHA_OUTER),
+                                 (TUNNEL_LIGHT_GLOW_HALF_ANGLE_INNER, TUNNEL_LIGHT_GLOW_ALPHA_INNER),
+                             ):
+                                 tg0 = center_theta - half_angle
+                                 tg1 = center_theta + half_angle
+                                 a = int(base_alpha * glow_fade)
+                                 pygame.draw.polygon(tunnel_glow_surf, (*TUNNEL_LIGHT_COLOR, a), [
+                                     tunnel_arc_pt(tg0, x1, y1, s1), tunnel_arc_pt(tg1, x1, y1, s1),
+                                     tunnel_arc_pt(tg1, x2, y2, s2), tunnel_arc_pt(tg0, x2, y2, s2)])
 
              # Goal Line
              if seg['p1']['z'] <= GOAL_DISTANCE < seg['p2']['z']:
@@ -740,7 +781,11 @@ class Track:
                      gw = ROAD_WORLD_WIDTH * gs
                      gh = (STRIPE_LENGTH * 0.3) * gs
                      pygame.draw.rect(screen, (255, 255, 255), (gx - gw/2, gy - gh, gw, gh))
-        
+
+        # トンネル天井ライトのグローを加算合成でまとめてblit（本体ポリゴンの上から重ねる）
+        if tunnel_glow_surf is not None:
+            screen.blit(tunnel_glow_surf, (0, 0), special_flags=pygame.BLEND_ADD)
+
         # カーブ累積値を返す（背景の消失点オフセットに使用）
         return dx
 
