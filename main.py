@@ -248,10 +248,6 @@ def main():
                 # 背景にカメラ高さを通知（消失点同期用）
                 bg_manager.set_camera_y_offset(smoothed_camera_y)
 
-                
-                # Update Effects
-                effects.update_particles(dt_sec)
-                
                 # Spawn Dust/Sand if Offroad
                 # Independent Left/Right Logic
                 import random
@@ -487,7 +483,17 @@ def main():
                          rec_cam_y = track.get_height_at(car.z)
                      
                      smoothed_camera_y = rec_cam_y
-                     
+
+                     # [FIX 2026-07-17] Background scroll/pitch/camera-offset were only
+                     # updated in STATE_PLAYING, so the background froze during replay
+                     # even though the car kept moving. Drive them from replay data too.
+                     replay_curve_val = track.get_curve_at(car.z)
+                     bg_manager.update(dt_sec, replay_curve_val, car.speed)
+                     bg_manager.set_camera_y_offset(smoothed_camera_y)
+
+                     replay_target_slope = track.get_slope_at(car.z)
+                     smoothed_slope += (replay_target_slope - smoothed_slope) * 0.1
+
                      replay_index += 1
                  else:
                      current_state = STATE_GAME_CLEAR
@@ -497,6 +503,11 @@ def main():
                  # screen, causing an immediate unintended restart. Brake is button(1)=B.
                  if keys[pygame.K_DOWN] or keys[pygame.K_b] or (joystick and joystick.get_button(1)):
                      current_state = STATE_GAME_CLEAR
+
+            # [FIX 2026-07-17] Runs every state (not just STATE_PLAYING) so dust/sand/
+            # spark particles keep animating and fading during GOAL/STAGE_CLEAR/REPLAY
+            # instead of freezing in place.
+            effects.update_particles(dt_sec)
 
             # --- Rendering ---
             render_stage_id = stage_id

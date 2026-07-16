@@ -103,14 +103,17 @@ class Car:
             if abs(axis_x) > 0.1: # Deadzone
                 self.steering_input = axis_x
 
+        # Combine if both pressed (though rare) in keyboard only case,
+        # but stick handles 0 naturally.
+        # [FIX 2026-07-17] This zeroing used to run AFTER applying steering to
+        # position below, so both-keys-pressed moved self.x while steering_input
+        # (used for visual tilt and replay recording) stayed at 0.
+        if keys[pygame.K_LEFT] and keys[pygame.K_RIGHT]:
+            self.steering_input = 0.0
+
         # Apply steering to position
         if abs(self.steering_input) > 0.01:
             self.x += self.steering_input * current_turn_speed
-
-        # Combine if both pressed (though rare) in keyboard only case, 
-        # but stick handles 0 naturally. 
-        if keys[pygame.K_LEFT] and keys[pygame.K_RIGHT]:
-            self.steering_input = 0.0
 
         # ... (Rest of Physics logic remains same)
         
@@ -280,7 +283,18 @@ class Car:
                  current_accel *= grip
                  
              self.speed += current_accel
-             
+
+        elif (keys[pygame.K_UP] or keys[pygame.K_w] or keys[pygame.K_SPACE] or (joystick and joystick.get_button(0))) and not self.offroad:
+             # [FIX 2026-07-17] On-road and already at/above current_limit while still
+             # holding the accelerator. The previous code fell through to the coast-decel
+             # branch below every time speed reached the cap (since neither this elif's
+             # old "< current_limit" nor the next "> current_limit" matched at equality),
+             # causing accel_pressed to toggle on/off each frame: audible engine-volume
+             # flicker and a slight speed jitter right at top speed. Holding here keeps
+             # accel_pressed True and clamps speed instead of oscillating.
+             self.accel_pressed = True
+             self.speed = current_limit
+
         elif self.speed > current_limit:
              # Fast deceleration when offroad or coasting above max
              decel = DECEL_RATE * 4.0 if self.offroad else DECEL_RATE
