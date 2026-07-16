@@ -3,10 +3,27 @@ import os
 import inspect
 from datetime import datetime
 
-# Determine the directory where this script is located
+# [FIX 2026-07-17] This script lives in src/, while logs/ is a sibling of src/
+# under the project root (same layout as asset/), so go up one level. Previously
+# this pointed at src/logs/, splitting log output from the project-root logs/
+# directory that everything else assumes.
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-LOG_DIR = os.path.join(BASE_DIR, "logs")
+LOG_DIR = os.path.join(BASE_DIR, "..", "logs")
 os.makedirs(LOG_DIR, exist_ok=True)
+
+def reset_logs():
+    """
+    Clear all *.log files in LOG_DIR. Call once at startup so log files don't
+    grow unbounded across runs (they previously only ever appended).
+    """
+    if not os.path.isdir(LOG_DIR):
+        return
+    for name in os.listdir(LOG_DIR):
+        if name.endswith(".log"):
+            try:
+                open(os.path.join(LOG_DIR, name), "w").close()
+            except Exception:
+                pass
 
 def _write_log(filename, level, message):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")

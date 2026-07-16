@@ -343,9 +343,10 @@ class BackgroundManager:
                 # Center of the image relative to the image surface itself is width // 2
                 # Since top half is centered on screen, sampling image center is correct for horizon color.
                 return layer.image.get_at((layer.width // 2, sample_y))[:3]
-            except:
-                pass
-                
+            except Exception as e:
+                from .logger import log_warn
+                log_warn(f"get_fog_color sample failed: {e}")
+
         return None
     
     def update(self, dt, curve_value, player_speed):
@@ -372,7 +373,9 @@ class BackgroundManager:
         img_y = int(max(0, min(layer.height - 1, screen_y - layer.base_y_offset)))
         try:
             return layer.image.get_at((layer.width // 2, img_y))[:3]
-        except:
+        except Exception as e:
+            from .logger import log_warn
+            log_warn(f"_sample_bg_color_at_y failed: {e}")
             return (100, 100, 100)
     
     def _sample_ground_color(self):
@@ -390,7 +393,9 @@ class BackgroundManager:
             avg_g = sum(c[1] for c in samples) // len(samples)
             avg_b = sum(c[2] for c in samples) // len(samples)
             return (avg_r, avg_g, avg_b)
-        except:
+        except Exception as e:
+            from .logger import log_warn
+            log_warn(f"_sample_ground_color failed: {e}")
             return (80, 60, 40)
     
     def _draw_gradient_band(self, screen, pitch_offset):

@@ -1,4 +1,3 @@
-# v23_stable src package
 # This file makes the src directory a Python package
 
 from .car import Car

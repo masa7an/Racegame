@@ -3,7 +3,7 @@
 import pygame
 import sys
 import os
-from src.logger import log_info, log_phase
+from src.logger import log_info, log_phase, reset_logs
 
 # Modules
 from src.car import Car
@@ -72,6 +72,7 @@ def save_ranking(new_score):
 
 def main():
     # --- Initialization ---
+    reset_logs() # [FIX 2026-07-17] Start each run with clean log files
     pygame.init()
     pygame.mixer.init(frequency=44100, size=-16, channels=2)
     screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
@@ -630,13 +631,16 @@ def main():
         import traceback
         with open("crash_log.txt", "w") as f:
             f.write(traceback.format_exc())
-            print("CRASH DETECTED! Saved to crash_log.txt")
+        print("CRASH DETECTED! Saved to crash_log.txt")
         raise e
+    finally:
+        # [FIX 2026-07-17] Previously only ran on a clean exit; a crash re-raised
+        # past this point and skipped cleanup (engine sound channels left open,
+        # pygame never quit).
+        sound_manager.cleanup()
+        log_info("Application Exit")
+        pygame.quit()
 
-    # Cleanup
-    sound_manager.cleanup()
-    log_info("Application Exit")
-    pygame.quit()
     sys.exit()
 
 if __name__ == "__main__":
