@@ -46,12 +46,13 @@ TUNNEL_PORTAL_COLOR = (120, 118, 122)              # 小口面の色（外光に
 # 入口面に貼る平面シルエット1枚。アーチの根元は路面（＝山の裾と同じ平面）に接しているので、
 # 開口部は「穴」ではなく下辺の切り欠きになり、外周の稜線→アーチ輪郭を逆順、と一筆でたどれる
 # 単純多角形で描ける（pygameは穴あきポリゴンを描けないので、この性質に頼っている）。
-MOUNTAIN_HALF_WIDTH = 20000.0     # 中心から裾までの距離（world units）。接近時に裾を画面へ入れない幅
-MOUNTAIN_HEIGHT = 8000.0          # 稜線の最大高さ（路面から。接近時に画面上部を覆う）
+MOUNTAIN_HALF_WIDTH = 40000.0     # 中心から裾までの距離（world units）。接近時に裾を画面へ入れない幅
+MOUNTAIN_HEIGHT = 16000.0         # 稜線の最大高さ（路面から。接近時に画面上部を覆う）
 MOUNTAIN_COLOR = (46, 74, 44)     # 山肌の色（背景の地面と馴染む暗めの緑、単色）
 MOUNTAIN_SEED = 6                 # 稜線の形を固定する乱数シード（毎フレーム同じ形）
 MOUNTAIN_DETAIL_LEVELS = 5        # 稜線の分割段数（midpoint displacement。2^N+1 点になる）
 MOUNTAIN_ROUGHNESS = 0.35         # 稜線が包絡線から凹んでよい最大割合（0=なめらかな釣鐘、1=激しくギザギザ）
+MOUNTAIN_AA_SUPERSAMPLE = 4       # 稜線のAA: 帯を縦何倍で描いて縮小するか（＝中間色の段数。詳細は _blit_mountain_aa）
 
 # Tunnel Ceiling Lights (天井ライト — 装飾のみ、路面への影響なし)
 # 左右2灯に分離。弧のファセット分割とは独立した角度で自由に配置・サイズ調整する。
@@ -420,6 +421,42 @@ class Track:
         """
         n = (math.pi / 2) * math.sqrt(max(radius_px, 0.0) / (2 * TUNNEL_ARC_TOLERANCE_PX))
         return max(TUNNEL_ARC_SEGMENTS_MIN, min(TUNNEL_ARC_SEGMENTS_MAX, math.ceil(n)))
+
+    def _blit_mountain_aa(self, screen, mountain_poly, ridge_pts, color, screen_width, screen_height):
+        """稜線が画面に写っている帯だけを縦MOUNTAIN_AA_SUPERSAMPLE倍で描いて縮小し、
+        空との境の階段を消す（真のカバレッジAA）。適用したらTrueを返す。
+
+        pygame.draw.aaline は使えない。あれは「線」であってエッジのカバレッジAAではないため、
+        (1)塗りつぶしが1pxの帯を食って中間色が一切残らず、(2)線を1px下げても得られるのは
+        ほぼ塗り色そのままの1px線で、ほぼ水平な稜線（1px上がるまでの横の走りが長い＝階段が
+        最も目立つ所）には効かない。縮小によるカバレッジ計算なら列ごとに連続的な中間色が出る。
+
+        帯は画面のx範囲に掛かる稜線からだけ求める。接近時は稜線が画面の外（上）へ抜けて帯が
+        空になり、AAは自動的にスキップされる。＝山が画面を覆う一番重いフレームではコストゼロで、
+        稜線が見えている軽いフレームでだけ払う。
+        """
+        top = bot = None
+        for (ax, ay), (bx, by) in zip(ridge_pts, ridge_pts[1:]):
+            if max(ax, bx) < 0 or min(ax, bx) > screen_width or ax == bx:
+                continue
+            # 画面内に入る部分の端点でのyを取る（線分が画面をまたぐ場合は交点のy）
+            for cx in (max(min(ax, bx), 0.0), min(max(ax, bx), float(screen_width))):
+                cy = ay + (by - ay) * (cx - ax) / (bx - ax)
+                top = cy if top is None else min(top, cy)
+                bot = cy if bot is None else max(bot, cy)
+        if top is None:
+            return False
+
+        y0 = max(0, int(top) - 1)
+        y1 = min(screen_height, int(bot) + 2)
+        if y1 <= y0:
+            return False
+
+        f = MOUNTAIN_AA_SUPERSAMPLE
+        band = pygame.Surface((screen_width, (y1 - y0) * f), pygame.SRCALPHA)
+        pygame.draw.polygon(band, color, [(px, (py - y0) * f) for px, py in mountain_poly])
+        screen.blit(pygame.transform.smoothscale(band, (screen_width, y1 - y0)), (0, y0))
+        return True
 
     def _get_glow_scratch(self, key, size):
         # 縮小/拡大の中間Surfaceを使い回す（毎フレームの確保を避ける）
@@ -899,11 +936,20 @@ class Track:
                      # 坑外なのでフォグは暗闇ではなく通常のfog_colorへ寄せる（小口面と同じ扱い）。
                      # 坑内アーチ・ライトの後に描くので山が坑内を塞ぎ、この後のリングが開口部を縁取る。
                      mountain_color = Track.interpolate_color(MOUNTAIN_COLOR, fog_color, fog_pct)
-                     mountain_poly = [(x1 + mx * s1, y1 - my * s1) for mx, my in self._mountain_ridge]
-                     for k in range(arc_n + 1):
-                         mountain_poly.append(
-                             tunnel_arc_pt(math.pi * k / arc_n, x1, y1, s1, out_hw, out_h))
-                     pygame.draw.polygon(screen, mountain_color, mountain_poly)
+                     ridge_pts = [(x1 + mx * s1, y1 - my * s1) for mx, my in self._mountain_ridge]
+                     arc_pts = [tunnel_arc_pt(math.pi * k / arc_n, x1, y1, s1, out_hw, out_h)
+                                for k in range(arc_n + 1)]
+                     mountain_poly = ridge_pts + arc_pts
+
+                     # ベースの塗り。稜線を1px下げて描くのは、塗りつぶしが真の稜線より上へ
+                     # はみ出す（内部で座標を丸める）と、この後のAAの帯では消せない硬い縁が
+                     # 残ってしまうため。下げたぶんはAAの帯が上から塗り直す。
+                     pygame.draw.polygon(screen, mountain_color,
+                                         [(px, py + 1) for px, py in ridge_pts] + arc_pts)
+
+                     # 稜線と空の境の階段を消す（詳細と、pygameのaalineが使えない理由は _blit_mountain_aa）
+                     self._blit_mountain_aa(screen, mountain_poly, ridge_pts, mountain_color,
+                                            screen_width, screen_height)
 
                      for k in range(arc_n):
                          t0 = math.pi * k / arc_n
