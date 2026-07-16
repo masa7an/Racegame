@@ -39,10 +39,14 @@ TUNNEL_LIGHT_CENTER_OFFSET = math.radians(27.0)    # アーチ頂点(theta=90°)
 TUNNEL_LIGHT_HALF_ANGLE = math.radians(2.8)        # 各ライトの半幅角度（小さめサイズ）
 TUNNEL_LIGHT_SPACING = 4                           # ライトの周期（セグメント数）
 TUNNEL_LIGHT_ON_LENGTH = 2                          # 周期のうち点灯させるセグメント数（密な配置）
-TUNNEL_LIGHT_GLOW_HALF_ANGLE_OUTER = TUNNEL_LIGHT_HALF_ANGLE * 3.5  # グロー外側レイヤーの広がり角度
-TUNNEL_LIGHT_GLOW_HALF_ANGLE_INNER = TUNNEL_LIGHT_HALF_ANGLE * 1.8  # グロー内側レイヤーの広がり角度
-TUNNEL_LIGHT_GLOW_ALPHA_OUTER = 45                 # グロー外側の強さ（加算合成、0-255）
-TUNNEL_LIGHT_GLOW_ALPHA_INNER = 100                # グロー内側の強さ（加算合成、0-255）
+# グロー（にじみ）: ライト本体だけを発光用Surfaceに描き、縮小→拡大で作った疑似ブラーを
+# 加算合成で重ねる。(縮小率, 強さ) を縮小率の小さい順に並べる。縮小率が大きいレイヤーほど
+# 広く弱いにじみになる。強さ1.0のレイヤーが重なる中心は白飛びし、光源の芯として見える。
+TUNNEL_LIGHT_GLOW_LEVELS = (
+    (4, 1.0),                                      # 芯に近いハロー
+    (12, 0.7),                                     # 広く薄いにじみ
+)
+TUNNEL_LIGHT_GLOW_INTENSITY = 1.0                  # グロー全体の強さ倍率
 
 PROJECTION_PLANE_DIST = 300.0
 HORIZON_Y = 300
@@ -129,8 +133,9 @@ class Track:
         self.goal_distance = GOAL_DISTANCE
         self.goal_distance = GOAL_DISTANCE
         self.stripe_length = STRIPE_LENGTH
-        self._tunnel_glow_surf = None   # 天井ライトのグロー用オーバーレイ（毎フレーム再利用、サイズ変化時のみ再作成）
+        self._tunnel_glow_surf = None   # 天井ライトの発光用Surface（ライト本体のみを描き、ブラーの入力にする）
         self._tunnel_glow_size = (0, 0)
+        self._glow_scratch = {}         # ブラーの縮小/拡大に使うSurfaceのキャッシュ
     
     def project(self, world_x, world_y, world_z, road_offset, screen_width, screen_height):
         if world_z <= 0: return None
@@ -347,6 +352,38 @@ class Track:
         b = int(c1[2] + (c2[2] - c1[2]) * t)
         return (r, g, b)
 
+    def _get_glow_scratch(self, key, size):
+        # 縮小/拡大の中間Surfaceを使い回す（毎フレームの確保を避ける）
+        surf = self._glow_scratch.get(key)
+        if surf is None or surf.get_size() != size:
+            surf = pygame.Surface(size)
+            self._glow_scratch[key] = surf
+        return surf
+
+    def _blit_tunnel_glow(self, screen, glow_surf):
+        # 発光用Surface（ライト本体のみ）を縮小→拡大した疑似ブラーとして加算合成する。
+        # 縮小するとライトの色が周囲の黒と混ざり、拡大時の補間で連続的な減衰になる＝にじみ。
+        # 各レイヤーは前段の縮小結果からさらに縮小するので、一気に縮小するより滑らかで安い。
+        screen_size = screen.get_size()
+        src = glow_surf
+        for level_idx, (divisor, weight) in enumerate(TUNNEL_LIGHT_GLOW_LEVELS):
+            small_size = (max(1, screen_size[0] // divisor), max(1, screen_size[1] // divisor))
+            small = self._get_glow_scratch(('down', level_idx), small_size)
+            pygame.transform.smoothscale(src, small_size, small)
+            src = small
+
+            layer = small
+            w = max(0, min(255, int(255 * weight * TUNNEL_LIGHT_GLOW_INTENSITY)))
+            if w < 255:
+                # 強さの調整は乗算で行う（加算合成ではアルファ値が無視されるため）
+                layer = self._get_glow_scratch(('fade', level_idx), small_size)
+                layer.blit(small, (0, 0))
+                layer.fill((w, w, w), special_flags=pygame.BLEND_MULT)
+
+            up = self._get_glow_scratch('up', screen_size)
+            pygame.transform.smoothscale(layer, screen_size, up)
+            screen.blit(up, (0, 0), special_flags=pygame.BLEND_ADD)
+
     def draw(self, screen, player_z, player_x, screen_width, screen_height, stage_id=1, fog_color=None, camera_y=None):
         # Config (fallback for fog)
         cfg = STAGE_CONFIG.get(stage_id, STAGE_CONFIG[1])
@@ -405,14 +442,15 @@ class Track:
             render_points[-1]['y_world'] = actual_y
 
             
-        # トンネル天井ライトのグロー用オーバーレイ（加算合成、毎フレーム透明にクリアして再利用）
+        # トンネル天井ライトの発光用Surface（ライト本体だけを描き、後段でブラーをかけて加算合成する）
+        # 黒でクリアするのは、加算合成では黒＝発光なしとして扱われるため（縮小時に黒と混ざって減衰する）
         tunnel_glow_surf = None
         if tunnel_start is not None:
             if self._tunnel_glow_surf is None or self._tunnel_glow_size != (screen_width, screen_height):
-                self._tunnel_glow_surf = pygame.Surface((screen_width, screen_height), pygame.SRCALPHA)
+                self._tunnel_glow_surf = pygame.Surface((screen_width, screen_height))
                 self._tunnel_glow_size = (screen_width, screen_height)
             tunnel_glow_surf = self._tunnel_glow_surf
-            tunnel_glow_surf.fill((0, 0, 0, 0))
+            tunnel_glow_surf.fill((0, 0, 0))
 
         # Draw Back-to-Front
         for i in range(max_idx, start_idx - 1, -1):
@@ -742,28 +780,20 @@ class Track:
                  light_on = (seg['index'] % TUNNEL_LIGHT_SPACING) < TUNNEL_LIGHT_ON_LENGTH
                  if light_on:
                      light_color = Track.interpolate_color(TUNNEL_LIGHT_COLOR, TUNNEL_FOG_COLOR, fog_pct)
-                     glow_fade = max(0.0, 1.0 - fog_pct)  # 奥のライトほどグローも弱める
+                     # 発光色は奥ほど黒へ落とす（黒＝発光なしなので、奥のライトのにじみが自然に弱まる）
+                     glow_color = Track.interpolate_color(TUNNEL_LIGHT_COLOR, (0, 0, 0), fog_pct)
                      for side in (-1, 1):
                          center_theta = math.pi / 2 + side * TUNNEL_LIGHT_CENTER_OFFSET
                          t0 = center_theta - TUNNEL_LIGHT_HALF_ANGLE
                          t1 = center_theta + TUNNEL_LIGHT_HALF_ANGLE
-                         pygame.draw.polygon(screen, light_color, [
+                         quad = [
                              tunnel_arc_pt(t0, x1, y1, s1), tunnel_arc_pt(t1, x1, y1, s1),
-                             tunnel_arc_pt(t1, x2, y2, s2), tunnel_arc_pt(t0, x2, y2, s2)])
+                             tunnel_arc_pt(t1, x2, y2, s2), tunnel_arc_pt(t0, x2, y2, s2)]
+                         pygame.draw.polygon(screen, light_color, quad)
 
-                         # グロー（にじみ）: 別オーバーレイに本体より広い角度で二段階の半透明レイヤーを重ね、
-                         # ループ後に加算合成でスクリーンへ一括blit（car.pyのヘッドライトグローと同じ手法）
-                         if tunnel_glow_surf is not None and glow_fade > 0.02:
-                             for half_angle, base_alpha in (
-                                 (TUNNEL_LIGHT_GLOW_HALF_ANGLE_OUTER, TUNNEL_LIGHT_GLOW_ALPHA_OUTER),
-                                 (TUNNEL_LIGHT_GLOW_HALF_ANGLE_INNER, TUNNEL_LIGHT_GLOW_ALPHA_INNER),
-                             ):
-                                 tg0 = center_theta - half_angle
-                                 tg1 = center_theta + half_angle
-                                 a = int(base_alpha * glow_fade)
-                                 pygame.draw.polygon(tunnel_glow_surf, (*TUNNEL_LIGHT_COLOR, a), [
-                                     tunnel_arc_pt(tg0, x1, y1, s1), tunnel_arc_pt(tg1, x1, y1, s1),
-                                     tunnel_arc_pt(tg1, x2, y2, s2), tunnel_arc_pt(tg0, x2, y2, s2)])
+                         # にじみは本体の形をぼかして作るので、発光用Surfaceへ描くのも本体と同じ形でよい
+                         if tunnel_glow_surf is not None:
+                             pygame.draw.polygon(tunnel_glow_surf, glow_color, quad)
 
              # Goal Line
              if seg['p1']['z'] <= GOAL_DISTANCE < seg['p2']['z']:
@@ -782,9 +812,9 @@ class Track:
                      gh = (STRIPE_LENGTH * 0.3) * gs
                      pygame.draw.rect(screen, (255, 255, 255), (gx - gw/2, gy - gh, gw, gh))
 
-        # トンネル天井ライトのグローを加算合成でまとめてblit（本体ポリゴンの上から重ねる）
+        # トンネル天井ライトのにじみを、本体ポリゴンの上からまとめて重ねる
         if tunnel_glow_surf is not None:
-            screen.blit(tunnel_glow_surf, (0, 0), special_flags=pygame.BLEND_ADD)
+            self._blit_tunnel_glow(screen, tunnel_glow_surf)
 
         # カーブ累積値を返す（背景の消失点オフセットに使用）
         return dx
