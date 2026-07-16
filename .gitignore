@@ -16,6 +16,13 @@ crash_log.txt
 ranking.json
 settings.json
 
+# 作業メモ・スクラッチ
+__ignore_*
+car.txt
+
+# スクリーンショット（ルート直下のみ。asset/ は上で除外済み、docs/ の画像は対象外）
+/*.png
+
 # IDE
 .vscode/
 .idea/
