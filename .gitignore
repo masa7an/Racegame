@@ -14,6 +14,7 @@ crash_log.txt
 
 # User data
 ranking.json
+settings.json
 
 # IDE
 .vscode/

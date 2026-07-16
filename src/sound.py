@@ -14,7 +14,8 @@ class SoundManager:
 
         self.channels = {}
         self.sounds = {}
-        
+        self.user_volume = 1.0  # Master volume set via the settings menu (0.0-1.0)
+
         # Path to engine.wav: this file lives in src/, while asset/ is a sibling
         # of src/ under the project root, so we need to go up one level.
         base_path = os.path.dirname(os.path.abspath(__file__))
@@ -70,7 +71,7 @@ class SoundManager:
 
             self.is_muted = False
 
-            
+
         except Exception as e:
             print(f"Error loading sound: {e}")
             import traceback
@@ -297,7 +298,8 @@ class SoundManager:
         master_vol = 0.6
         if accel_pressed:
             master_vol = 0.8
-        
+        master_vol *= self.user_volume
+
         # Apply
         self.ch_low.set_volume(v_low * master_vol)
         self.ch_mid.set_volume(v_mid * master_vol)
@@ -328,4 +330,9 @@ class SoundManager:
             self.ch_high.set_volume(0)
         else:
             print("Engine Sound: Unmuted")
+
+    def set_master_volume(self, volume):
+        """Sets the user master volume (0.0-1.0), applied on top of the engine's
+        own speed-based mix on the next update() call."""
+        self.user_volume = max(0.0, min(1.0, volume))
 

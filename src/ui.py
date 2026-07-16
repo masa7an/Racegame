@@ -316,4 +316,35 @@ class UI:
         jp_rect = jp_guide_s.get_rect(topright=(self.screen_width - 20, 95))
         screen.blit(jp_guide_s, jp_rect)
 
+    def draw_settings_menu(self, screen, master_volume):
+        """
+        Draws the volume settings overlay (opened/closed with Tab / Start).
+        """
+        s = pygame.Surface((self.screen_width, self.screen_height), pygame.SRCALPHA)
+        s.fill((0, 0, 0, 180))
+        screen.blit(s, (0, 0))
+
+        title = self.font.render("SETTINGS", True, (255, 215, 0))
+        title_rect = title.get_rect(center=(self.screen_width / 2, 220))
+        screen.blit(title, title_rect)
+
+        vol_pct = int(round(master_volume * 100))
+        label = self.font.render(f"VOLUME: {vol_pct}%", True, (255, 255, 255))
+        label_rect = label.get_rect(center=(self.screen_width / 2, 280))
+        screen.blit(label, label_rect)
+
+        # Bar
+        bar_w, bar_h = 300, 24
+        bar_x = self.screen_width / 2 - bar_w / 2
+        bar_y = 320
+        pygame.draw.rect(screen, (80, 80, 80), (bar_x, bar_y, bar_w, bar_h))
+        fill_w = int(bar_w * master_volume)
+        pygame.draw.rect(screen, (100, 220, 100), (bar_x, bar_y, fill_w, bar_h))
+        pygame.draw.rect(screen, (255, 255, 255), (bar_x, bar_y, bar_w, bar_h), 2)
+
+        guide = self.font.render("<- -> : VOLUME   [TAB] CLOSE", True, (200, 200, 200))
+        guide_scaled = pygame.transform.rotozoom(guide, 0, 0.8)
+        guide_rect = guide_scaled.get_rect(center=(self.screen_width / 2, 380))
+        screen.blit(guide_scaled, guide_rect)
+
 

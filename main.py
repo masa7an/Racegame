@@ -25,6 +25,14 @@ STATE_STAGE_CLEAR = 2
 STATE_NEXT_STAGE_INIT = 3
 STATE_GAME_CLEAR = 4
 STATE_REPLAY = 5 # NEW: Replay Mode
+STATE_SETTINGS = 6 # Volume settings overlay (can be entered from any other state)
+
+# Volume Settings Constants
+SETTINGS_FILE = "settings.json"
+BGM_BASE_VOLUME = 0.5  # BGM volume at master_volume = 1.0
+DEFAULT_MASTER_VOLUME = 0.7  # Used when no settings.json exists yet
+VOLUME_STEP = 0.05
+VOLUME_REPEAT_INTERVAL = 0.1  # seconds between steps while held
 
 import json
 
@@ -70,6 +78,27 @@ def save_ranking(new_score):
     return scores
 
 
+def load_settings():
+    """Loads master_volume from settings.json. Returns DEFAULT_MASTER_VOLUME if missing/corrupt."""
+    if os.path.exists(SETTINGS_FILE):
+        try:
+            with open(SETTINGS_FILE, "r", encoding="utf-8-sig") as f:
+                data = json.load(f)
+            return max(0.0, min(1.0, float(data.get("master_volume", DEFAULT_MASTER_VOLUME))))
+        except Exception as e:
+            print(f"Error reading settings: {e}")
+    return DEFAULT_MASTER_VOLUME
+
+
+def save_settings(master_volume):
+    """Saves master_volume to settings.json."""
+    try:
+        with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
+            json.dump({"master_volume": master_volume}, f)
+    except Exception as e:
+        print(f"Error writing settings: {e}")
+
+
 def main():
     # --- Initialization ---
     reset_logs() # [FIX 2026-07-17] Start each run with clean log files
@@ -80,11 +109,14 @@ def main():
     clock = pygame.time.Clock()
     font = pygame.font.Font(None, HUD_FONT_SIZE)
 
+    # --- Volume Settings ---
+    master_volume = load_settings()
+
     # --- BGM Setup ---
     try:
-        bgm_file = "asset/Experimental_Model_long.mp3" 
+        bgm_file = "asset/Experimental_Model_long.mp3"
         pygame.mixer.music.load(bgm_file)
-        pygame.mixer.music.set_volume(0.5)
+        pygame.mixer.music.set_volume(BGM_BASE_VOLUME * master_volume)
         pygame.mixer.music.play(-1)
         print(f"Playing BGM: {bgm_file}")
     except Exception as e:
@@ -99,6 +131,7 @@ def main():
     effects = Effects(SCREEN_WIDTH, SCREEN_HEIGHT)
     bg_manager = BackgroundManager(SCREEN_WIDTH, SCREEN_HEIGHT)
     sound_manager = SoundManager()
+    sound_manager.set_master_volume(master_volume)
 
     # State Variables
     current_state = STATE_PLAYING
@@ -126,7 +159,13 @@ def main():
     # both exits the replay and is "Exit" on the GAME_CLEAR screen, so a held B ran
     # both actions on consecutive frames and quit the game. These are edge-triggered.
     prev_menu_input = {'continue': False, 'exit': False, 'replay': False}
-    
+
+    # Settings Menu Variables
+    # previous_state: where to return when the settings overlay is closed.
+    previous_state = STATE_PLAYING
+    prev_settings_toggle = False  # for edge-detecting the open/close button
+    vol_repeat_timer = 0.0  # counts down while left/right is held, for auto-repeat
+
     # Initial Route Setup
     track.create_road(stage_id)
     bg_manager.set_stage(stage_id)
@@ -197,6 +236,22 @@ def main():
             }
             menu_pressed = {k: v and not prev_menu_input[k] for k, v in menu_input.items()}
             prev_menu_input = menu_input
+
+            # Settings overlay toggle (Tab / Start button), edge-triggered so holding
+            # it doesn't flicker the menu open/closed every frame. Works from any
+            # state and remembers previous_state so closing returns to where we were.
+            start_button_down = False
+            if joystick and joystick.get_numbuttons() > 7:
+                start_button_down = joystick.get_button(7)
+            settings_toggle = bool(keys[pygame.K_TAB] or start_button_down)
+            if settings_toggle and not prev_settings_toggle:
+                if current_state == STATE_SETTINGS:
+                    current_state = previous_state
+                else:
+                    previous_state = current_state
+                    current_state = STATE_SETTINGS
+                    vol_repeat_timer = 0.0
+            prev_settings_toggle = settings_toggle
 
             # --- Update ---
             
@@ -508,6 +563,35 @@ def main():
                  if menu_pressed['exit']:
                      current_state = STATE_GAME_CLEAR
 
+            elif current_state == STATE_SETTINGS:
+                 # Volume adjustment: keyboard arrows, D-pad, or left stick (axis 0).
+                 # Auto-repeats while held (see VOLUME_REPEAT_INTERVAL) rather than
+                 # being edge-triggered, since a slider should move while held.
+                 vol_dir = 0
+                 if keys[pygame.K_LEFT]:
+                     vol_dir = -1
+                 elif keys[pygame.K_RIGHT]:
+                     vol_dir = 1
+                 if joystick:
+                     if joystick.get_numhats() > 0:
+                         hat_x, _ = joystick.get_hat(0)
+                         if hat_x != 0:
+                             vol_dir = hat_x
+                     axis_x = joystick.get_axis(0)
+                     if abs(axis_x) > 0.5:
+                         vol_dir = 1 if axis_x > 0 else -1
+
+                 if vol_dir != 0:
+                     vol_repeat_timer -= dt_sec
+                     if vol_repeat_timer <= 0:
+                         master_volume = max(0.0, min(1.0, master_volume + vol_dir * VOLUME_STEP))
+                         pygame.mixer.music.set_volume(BGM_BASE_VOLUME * master_volume)
+                         sound_manager.set_master_volume(master_volume)
+                         save_settings(master_volume)
+                         vol_repeat_timer = VOLUME_REPEAT_INTERVAL
+                 else:
+                     vol_repeat_timer = 0.0
+
             # [FIX 2026-07-17] Runs every state (not just STATE_PLAYING) so dust/sand/
             # spark particles keep animating and fading during GOAL/STAGE_CLEAR/REPLAY
             # instead of freezing in place.
@@ -596,12 +680,18 @@ def main():
             # Render relative to car so they look like they come from it
             effects.render_sparks(screen)
             # 4. HUD
-            if current_state == STATE_GAME_CLEAR:
+            # [Settings] While the settings overlay is open, current_state stays
+            # STATE_SETTINGS, so the HUD/speedometer/messages below are drawn for
+            # whichever state we paused from (previous_state) and the volume box
+            # is layered on top of that frozen screen.
+            hud_state = previous_state if current_state == STATE_SETTINGS else current_state
+
+            if hud_state == STATE_GAME_CLEAR:
                 ui.draw_game_clear(screen, total_time_result, ranking_data)
-            elif current_state == STATE_REPLAY:
+            elif hud_state == STATE_REPLAY:
                 ui.draw_replay_status(screen)
             else:
-                if current_state == STATE_PLAYING:
+                if hud_state == STATE_PLAYING:
                      elapsed_time = (pygame.time.get_ticks() - start_time) / 1000.0
                 else:
                      # Show frozen time
@@ -609,24 +699,27 @@ def main():
 
                 rem_dist = max(0, int((track.goal_distance - car.z)/100))
                 ui.draw_hud(screen, stage_id, elapsed_time, rem_dist)
-                
+
             # Show active speed or frozen goal speed
             display_speed = car.speed
             is_speed_frozen = False
-            if current_state in [STATE_GOAL, STATE_STAGE_CLEAR]:
+            if hud_state in [STATE_GOAL, STATE_STAGE_CLEAR]:
                 display_speed = goal_speed
                 is_speed_frozen = True
-            
+
             ui.draw_speedometer(screen, display_speed, is_frozen=is_speed_frozen)
 
 
-            
-            if current_state == STATE_GOAL:
+
+            if hud_state == STATE_GOAL:
                 ui.draw_message(screen, "GOAL!!", (255, 0, 0))
-            elif current_state == STATE_STAGE_CLEAR:
+            elif hud_state == STATE_STAGE_CLEAR:
                  ui.draw_message(screen, f"STAGE {stage_id} CLEAR", (0, 255, 255), scale=3.0)
-            elif current_state == STATE_GAME_CLEAR:
+            elif hud_state == STATE_GAME_CLEAR:
                  pass # UI drawn above
+
+            if current_state == STATE_SETTINGS:
+                ui.draw_settings_menu(screen, master_volume)
 
             pygame.display.flip()
 
