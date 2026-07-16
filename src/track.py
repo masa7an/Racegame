@@ -22,6 +22,13 @@ EDGE_SMOOTHING_ALPHA = 100      # 半透明度（0-255、低いほど透明）
 EDGE_ROUGHNESS_ENABLED = True   # でこぼこ有効/無効
 EDGE_ROUGHNESS_AMOUNT = 22.0    # でこぼこの最大ピクセル数
 
+# Tunnel Settings (Stage6 単発ギミック — docs/tunnel_requirements.md 参照)
+TUNNEL_HEIGHT = 3000.0                             # 路面からの天井高さ（world units、CAMERA_HEIGHT=1500の2倍）
+TUNNEL_HALF_WIDTH = ROAD_WORLD_WIDTH / 2 * 1.15    # 中心から壁までの距離（道路端より15%外側）
+TUNNEL_WALL_COLOR = (62, 60, 64)                   # 側壁の基本色
+TUNNEL_CEILING_COLOR = (44, 43, 47)                # 天井の基本色（壁より暗く）
+TUNNEL_FOG_COLOR = (14, 14, 17)                    # トンネル奥の到達色（通常フォグの代わりに暗闇へフェード）
+
 PROJECTION_PLANE_DIST = 300.0
 HORIZON_Y = 300
 CAMERA_HEIGHT = 1500.0
@@ -84,6 +91,20 @@ STAGE_CONFIG = {
         'fog_gradient': True,        # 霧グラデーションを有効化
         'fog_gradient_height': 80,   # 霧の高さ
         'fog_gradient_offset': 0     # 開始位置（下段グラデ開始から）
+    },
+    6: {
+        # Stage1の環境・コース特性を複製（トンネルギミック用ステージ）
+        # stage_idが乱数シードのため、実際のコースレイアウトはStage1とは別物になる
+        'sky_color': (100, 149, 237), 'grass_color': (34, 139, 34),
+        'road_light': (105, 105, 105), 'road_dark': (95, 95, 95),
+        'bg_image': 'asset/bg1.png', 'ground_image': 'asset/bg1v.png', 'bg_offset_y': -140,
+        'curve_freq': 0.05, 'curve_amp': 30.0,
+        'curve_mult': 0.8,
+        'sharp_prob': 0.1, 's_curve_prob': 0.1,
+        'curb_enabled': True,
+        # トンネル区間（固定位置・固定長）: docs/tunnel_requirements.md 3-1参照
+        'tunnel_start_z': 20000.0,
+        'tunnel_length': 21000.0,
     },
 }
 
@@ -289,10 +310,17 @@ class Track:
                     has_left = True
                     
             return has_left, has_right
-            
+
         return False, False
 
-
+    def get_tunnel_at(self, z, stage_id=1):
+        """Returns True if the given z position is within the stage's tunnel section."""
+        cfg = STAGE_CONFIG.get(stage_id, STAGE_CONFIG[1])
+        tunnel_start = cfg.get('tunnel_start_z')
+        if tunnel_start is None:
+            return False
+        tunnel_end = tunnel_start + cfg.get('tunnel_length', 0.0)
+        return tunnel_start <= z < tunnel_end
 
     @staticmethod
     def interpolate_color(c1, c2, t):
@@ -310,6 +338,10 @@ class Track:
             
         # Curb enabled check
         curb_enabled = cfg.get('curb_enabled', False)
+
+        # Tunnel section range (Stage6 gimmick)
+        tunnel_start = cfg.get('tunnel_start_z')
+        tunnel_end = (tunnel_start + cfg.get('tunnel_length', 0.0)) if tunnel_start is not None else 0.0
         
         # Find start segment
         start_idx = int(player_z / STRIPE_LENGTH)
@@ -450,8 +482,14 @@ class Track:
                  extra_fog = horizon_fade * 1.0  # 最大100%フォグ（完全に背景色）
                  fog_pct = min(1.0, fog_pct + extra_fog)
                  
+             # Tunnel section check (Stage6 gimmick) — 路面・縁石・壁のフォグ到達色を暗闇に切り替える
+             in_tunnel = tunnel_start is not None and tunnel_start <= seg['p1']['z'] < tunnel_end
+
              # Use specific road fog color if defined, else global fog color
-             target_fog = cfg.get('road_fog_color', fog_color)
+             if in_tunnel:
+                 target_fog = TUNNEL_FOG_COLOR
+             else:
+                 target_fog = cfg.get('road_fog_color', fog_color)
              poly_color = Track.interpolate_color(seg['color'], target_fog, fog_pct)
 
              # Draw Poly
@@ -642,7 +680,35 @@ class Track:
                      # Border (road side)
                      pygame.draw.line(screen, border_color,
                                      (x1 + w1/2, y1), (x2 + w2/2, y2), 2)
-             
+
+             # ===== Tunnel Section (天井・側壁 — Stage6 単発ギミック) =====
+             # 道路と同じ透視スケール(s1/s2)で、路面から TUNNEL_HEIGHT 上に天井、
+             # 左右 TUNNEL_HALF_WIDTH に側壁の台形ポリゴンを重ね描きする。
+             # フォグは通常のfog_colorではなく暗闇(TUNNEL_FOG_COLOR)へフェードさせる。
+             if in_tunnel:
+                 # 天井のスクリーンY（路面Yから高さ分を透視スケールで引き上げ）
+                 y1_ceil = y1 - TUNNEL_HEIGHT * s1
+                 y2_ceil = y2 - TUNNEL_HEIGHT * s2
+                 # 壁のスクリーンX（道路中心から左右へ）
+                 hw1 = TUNNEL_HALF_WIDTH * s1
+                 hw2 = TUNNEL_HALF_WIDTH * s2
+
+                 wall_color = Track.interpolate_color(TUNNEL_WALL_COLOR, TUNNEL_FOG_COLOR, fog_pct)
+                 ceil_color = Track.interpolate_color(TUNNEL_CEILING_COLOR, TUNNEL_FOG_COLOR, fog_pct)
+
+                 # 左壁（路面→天井の縦面）
+                 pygame.draw.polygon(screen, wall_color, [
+                     (x1 - hw1, y1), (x2 - hw2, y2),
+                     (x2 - hw2, y2_ceil), (x1 - hw1, y1_ceil)])
+                 # 右壁
+                 pygame.draw.polygon(screen, wall_color, [
+                     (x1 + hw1, y1), (x2 + hw2, y2),
+                     (x2 + hw2, y2_ceil), (x1 + hw1, y1_ceil)])
+                 # 天井（下から見上げた面）
+                 pygame.draw.polygon(screen, ceil_color, [
+                     (x1 - hw1, y1_ceil), (x1 + hw1, y1_ceil),
+                     (x2 + hw2, y2_ceil), (x2 - hw2, y2_ceil)])
+
              # Goal Line
              if seg['p1']['z'] <= GOAL_DISTANCE < seg['p2']['z']:
                  offset_z = GOAL_DISTANCE - seg['p1']['z']

@@ -257,7 +257,7 @@ def main():
             
             if current_state == STATE_NEXT_STAGE_INIT:
                 stage_id += 1
-                if stage_id > 5:
+                if stage_id > 6:
                     # All Cleared
                     current_state = STATE_GAME_CLEAR
                     total_time_result = sum(stage_times.values())
@@ -599,7 +599,7 @@ def main():
 
             # --- Rendering ---
             render_stage_id = stage_id
-            if render_stage_id > 5: render_stage_id = 5
+            if render_stage_id > 6: render_stage_id = 6
             
             # 1. Background
             # 1. Background
