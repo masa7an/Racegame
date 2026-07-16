@@ -46,8 +46,8 @@ PLAYING ──(ゴール到達)──▶ GOAL ──(1.5s)──▶ STAGE_CLEAR 
 
 擬似3Dレース（アウトラン式）の古典的手法をベースに実装：
 
-- **セグメント方式**: `STRIPE_LENGTH=300`単位でコースを短冊状の `segments` 配列に分割し、各セグメントが `p1/p2` の `{z, y}` とカーブ値・色を保持（[track.py:124](v24_stable/src/track.py:124) `add_segment_sequence`）。
-- **投影**: `screen_y = HORIZON_Y - world_y * scale`, `scale = PROJECTION_PLANE_DIST / world_z` という単純な透視除算（[track.py:97](v24_stable/src/track.py:97) `project`）。
+- **セグメント方式**: `STRIPE_LENGTH=300`単位でコースを短冊状の `segments` 配列に分割し、各セグメントが `p1/p2` の `{z, y}` とカーブ値・色を保持（[track.py:124](../src/track.py:124) `add_segment_sequence`）。
+- **投影**: `screen_y = HORIZON_Y - world_y * scale`, `scale = PROJECTION_PLANE_DIST / world_z` という単純な透視除算（[track.py:97](../src/track.py:97) `project`）。
 - **描画順序**: 遠方から手前へのペインターズアルゴリズム（`draw()` 内 `for i in range(max_idx, start_idx-1, -1)`）。カーブは `dx`（曲率の累積値）としてXオフセットに畳み込まれ、道路だけでなく `bg_manager.set_curve_offset()` 経由で背景の消失点にも伝播する（モジュール間の**唯一の双方向っぽい連携ポイント**）。
 - **背景**: `BackgroundLayer`（空、緩やかな視差スクロール）+ `GroundLayer`（地面、ストライプ単位でスケールを変えるラスタ効果によって疑似アフィン変換を実現）の2層構成。両者の継ぎ目を隠すために `_draw_gradient_band` / `_draw_lower_gradient` / `_draw_fog_gradient` という**手動チューニングされたグラデーション帯**を3つ重ねている。定数（オフセット量、フェード指数、閾値等）はほぼ全てハードコードされたマジックナンバーで、コメントに試行錯誤の履歴（「Tested -100, -20, 0…」等）が残っている＝**設定より実験的調整で仕上げられたレンダリング**。
 
@@ -57,13 +57,13 @@ PLAYING ──(ゴール到達)──▶ GOAL ──(1.5s)──▶ STAGE_CLEAR 
 
 - ステージ非依存の基本パラメータ（`NORMAL_MAX_SPEED`, `ACCEL_RATE`, `STEER_SENSITIVITY_*` 等）は `car.py` 冒頭の定数。
 - ステージ固有の外観設定（色・カーブ頻度等）は `STAGE_CONFIG`（`track.py`）で**データ駆動**。
-- 一方で **ステージ固有の物理挙動**（Stage4の砂スリップ・オフロード時ブレーキ半減、Stage5のウェット操舵低下・ドリフト増加）は `car.py` の `update()` 内に `if stage_id == 4` / `if stage_id == 5` という**ハードコード分岐**として実装されている（[car.py:78](v24_stable/src/car.py:78), [car.py:233](v24_stable/src/car.py:233), [car.py:254](v24_stable/src/car.py:254) 等）。`STAGE_CONFIG` を拡張してそこにグリップ係数等を持たせる余地はあるが未使用 — **設計の一貫性がやや崩れている箇所**。
+- 一方で **ステージ固有の物理挙動**（Stage4の砂スリップ・オフロード時ブレーキ半減、Stage5のウェット操舵低下・ドリフト増加）は `car.py` の `update()` 内に `if stage_id == 4` / `if stage_id == 5` という**ハードコード分岐**として実装されている（[car.py:78](../src/car.py:78), [car.py:233](../src/car.py:233), [car.py:254](../src/car.py:254) 等）。`STAGE_CONFIG` を拡張してそこにグリップ係数等を持たせる余地はあるが未使用 — **設計の一貫性がやや崩れている箇所**。
 - `car.update()` は「操舵→遠心力→オフロード判定→坂道physics→加減速→座標更新」を1メソッドに直列実装（約230行）。副作用（`self.x`, `self.speed`, `self.offroad_l/r` 等7個以上のインスタンス変数を書き換え）が多く、単体テストは書きにくい構造。
 
 ## 5. エフェクト・サウンドの設計パターン（良い点）
 
 - **オブジェクトプール**: `Effects` はパーティクル/スパークを固定長配列（`max_particles=30`, `max_sparks=50`）で確保し、リングバッファ的に再利用（`pool_index = (pool_index+1) % max_particles`）。GC負荷を避ける典型的なリアルタイムゲームパターンが正しく使われている。
-- **手続き的サウンド合成**: `SoundManager` は起動時に `engine.wav` 1本から、ローパスフィルタ→エコー→ピッチシフト（サンプル間引き）を自前DSP（`wave`/`struct`使用、純Python実装）で適用し、低速/中速/高速の3ループを生成、速度に応じてチャンネル音量をクロスフェードする設計。追加音声アセット無しでエンジン音の速度感を表現する工夫だが、**起動時に純Pythonでサンプル単位ループ処理**（[sound.py:174](v24_stable/src/sound.py:174)以降）を行うため、WAV尺が伸びると起動が遅くなるリスクがある。
+- **手続き的サウンド合成**: `SoundManager` は起動時に `engine.wav` 1本から、ローパスフィルタ→エコー→ピッチシフト（サンプル間引き）を自前DSP（`wave`/`struct`使用、純Python実装）で適用し、低速/中速/高速の3ループを生成、速度に応じてチャンネル音量をクロスフェードする設計。追加音声アセット無しでエンジン音の速度感を表現する工夫だが、**起動時に純Pythonでサンプル単位ループ処理**（[sound.py:174](../src/sound.py:174)以降）を行うため、WAV尺が伸びると起動が遅くなるリスクがある。
 
 ## 6. 横断的な設計傾向・懸念点
 
