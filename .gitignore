@@ -4,6 +4,9 @@ __pycache__/
 *$py.class
 *.so
 
+# Assets (managed outside git)
+asset/
+
 # Logs
 logs/
 *.log
