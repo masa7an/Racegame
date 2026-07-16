@@ -27,7 +27,12 @@ EDGE_ROUGHNESS_AMOUNT = 22.0    # でこぼこの最大ピクセル数
 # 弧の縦横それぞれの半径にあたる（両者が等しければ真円の半分になる）。
 TUNNEL_HEIGHT = 2400.0                             # 路面からアーチ頂点までの高さ（world units）
 TUNNEL_HALF_WIDTH = ROAD_WORLD_WIDTH / 2 * 1.4     # 中心からアーチ両端（路面との接点）までの距離
-TUNNEL_ARC_SEGMENTS = 8                            # 弧を近似するポリゴン分割数
+# 弧の分割数は固定せず、投影後の半径から必要な数を毎回求める（LOD）。詳細は _arc_segments_for()。
+TUNNEL_ARC_TOLERANCE_PX = 0.8                      # 弦が真円から凹んでよい最大量（px）。小さいほど滑らかで重い
+TUNNEL_ARC_SEGMENTS_MIN = 4                        # 最遠方でも最低これだけは分割する
+TUNNEL_ARC_SEGMENTS_MAX = 24                       # 至近距離での分割数の上限（コスト頭打ち用）
+                                                   # 接近時に必要なのは約21なので画質には効かず、
+                                                   # 弧が画面外まで広がる至近距離のコストだけを抑える
 TUNNEL_ARCH_COLOR = (55, 53, 57)                   # アーチ全体の色（単色、陰影なし）
 TUNNEL_FLOOR_COLOR = (72, 70, 74)                  # 路肩の床色（コンクリート想定。道路端〜アーチ根元を埋める）
 TUNNEL_FOG_COLOR = (14, 14, 17)                    # トンネル奥の到達色（通常フォグの代わりに暗闇へフェード）
@@ -38,7 +43,7 @@ TUNNEL_PORTAL_THICKNESS = 170.0                    # 小口の厚み（world uni
 TUNNEL_PORTAL_COLOR = (120, 118, 122)              # 小口面の色（外光に照らされたコンクリート想定）
 
 # Tunnel Ceiling Lights (天井ライト — 装飾のみ、路面への影響なし)
-# 左右2灯に分離。弧のファセット分割(TUNNEL_ARC_SEGMENTS)とは独立した角度で自由に配置・サイズ調整する。
+# 左右2灯に分離。弧のファセット分割とは独立した角度で自由に配置・サイズ調整する。
 TUNNEL_LIGHT_COLOR = (255, 130, 30)                # ライトの色（オレンジ寄りの暖色系）
 TUNNEL_LIGHT_CENTER_OFFSET = math.radians(27.0)    # アーチ頂点(theta=90°)から左右ライト中心までの角度
 TUNNEL_LIGHT_HALF_ANGLE = math.radians(2.8)        # 各ライトの半幅角度（小さめサイズ）
@@ -357,6 +362,24 @@ class Track:
         b = int(c1[2] + (c2[2] - c1[2]) * t)
         return (r, g, b)
 
+    @staticmethod
+    def _arc_segments_for(radius_px):
+        """投影後の半径に対し、弧を何分割すれば多角形に見えないかを返す。
+
+        N分割の内接多角形は、弦の中央で真円より sagitta = R*(1-cos(pi/2N)) だけ内側に凹む。
+        これが多角形に見える正体なので、凹みが TUNNEL_ARC_TOLERANCE_PX 以下になる最小のNを
+        小角近似 sagitta ≈ R*(pi/2N)^2/2 から逆算する。
+
+        注意: この値はフレームごとに1つだけ求めて全トンネルセグメントで共有すること。
+        セグメントごとに分割数を変えてはいけない。手前のセグメントの弧（奥側の端）と
+        奥のセグメントの弧（手前側の端）は同一平面・同一半径で接しているが、分割数が違うと
+        内接多角形どうしが互いを包含せず（頂点数が違う内接多角形は入れ子にならない）、
+        細かい側が粗い側の外へ僅かに張り出す。その隙間はどちらのポリゴンにも覆われず、
+        継ぎ目に背景（空）が線状に覗く。
+        """
+        n = (math.pi / 2) * math.sqrt(max(radius_px, 0.0) / (2 * TUNNEL_ARC_TOLERANCE_PX))
+        return max(TUNNEL_ARC_SEGMENTS_MIN, min(TUNNEL_ARC_SEGMENTS_MAX, math.ceil(n)))
+
     def _get_glow_scratch(self, key, size):
         # 縮小/拡大の中間Surfaceを使い回す（毎フレームの確保を避ける）
         surf = self._glow_scratch.get(key)
@@ -449,6 +472,17 @@ class Track:
             
         # トンネル天井ライトの発光用Surface（ライト本体だけを描き、後段でブラーをかけて加算合成する）
         # 黒でクリアするのは、加算合成では黒＝発光なしとして扱われるため（縮小時に黒と混ざって減衰する）
+        # 弧の分割数はフレームに1つだけ決め、全トンネルセグメントで共有する（_arc_segments_for参照:
+        # セグメントごとに変えると継ぎ目に空が覗く）。基準は最寄りのトンネル断面＝画面上で最も
+        # 大きく写り、多角形が最も目立つ位置。トンネルが遠いフレームでは自動的に粗くなる。
+        tunnel_arc_n = TUNNEL_ARC_SEGMENTS_MIN
+        if tunnel_start is not None:
+            nearest_z = max(tunnel_start, player_z + PROJECTION_PLANE_DIST)
+            if nearest_z < tunnel_end:
+                nearest_scale = PROJECTION_PLANE_DIST / (nearest_z - player_z)
+                tunnel_arc_n = Track._arc_segments_for(
+                    max(TUNNEL_HALF_WIDTH, TUNNEL_HEIGHT) * nearest_scale)
+
         tunnel_glow_surf = None
         if tunnel_start is not None:
             if self._tunnel_glow_surf is None or self._tunnel_glow_size != (screen_width, screen_height):
@@ -762,7 +796,8 @@ class Track:
 
              # ===== Tunnel Section (半楕円アーチ — Stage6 単発ギミック) =====
              # 道路と同じ透視スケール(s1/s2)で、路面レベル(theta=0/pi)からアーチ頂点(theta=pi/2)
-             # までを TUNNEL_ARC_SEGMENTS 分割の台形ポリゴンで近似し、円柱を割ったような弧を描く。
+             # までを台形ポリゴンで近似し、円柱を割ったような弧を描く。分割数(tunnel_arc_n)は
+             # トンネルへの近さからフレーム単位で決まる。
              # フォグは通常のfog_colorではなく暗闇(TUNNEL_FOG_COLOR)へフェードさせる。
              if in_tunnel:
                  arch_color = Track.interpolate_color(TUNNEL_ARCH_COLOR, TUNNEL_FOG_COLOR, fog_pct)
@@ -770,14 +805,16 @@ class Track:
                  def tunnel_arc_pt(theta, x, y, s, hw=TUNNEL_HALF_WIDTH, h=TUNNEL_HEIGHT):
                      return (x + hw * math.cos(theta) * s, y - h * math.sin(theta) * s)
 
+                 arc_n = tunnel_arc_n
+
                  near_pts = []
                  far_pts = []
-                 for k in range(TUNNEL_ARC_SEGMENTS + 1):
-                     theta = math.pi * k / TUNNEL_ARC_SEGMENTS
+                 for k in range(arc_n + 1):
+                     theta = math.pi * k / arc_n
                      near_pts.append(tunnel_arc_pt(theta, x1, y1, s1))
                      far_pts.append(tunnel_arc_pt(theta, x2, y2, s2))
 
-                 for k in range(TUNNEL_ARC_SEGMENTS):
+                 for k in range(arc_n):
                      pygame.draw.polygon(screen, arch_color, [
                          near_pts[k], near_pts[k + 1], far_pts[k + 1], far_pts[k]])
 
@@ -806,13 +843,15 @@ class Track:
                  # 奥行き方向へは延ばさない：内枠から奥は坑内の弧そのものが既に埋めているので
                  # 重ねると近距離でその面を舐めるように見て画面全体が小口色で覆われる。
                  # 小口面は坑外（外光側）なので、フォグは暗闇ではなく通常のfog_colorへ寄せる。
+                 # 内枠は坑内の弧と同一平面・同一半径なので、分割数も弧と同じ arc_n を使う。
+                 # ここだけ細かくすると内枠が弧より外へ張り出し、継ぎ目に空が覗く。
                  if (seg['p1']['z'] - STRIPE_LENGTH) < tunnel_start:
                      portal_color = Track.interpolate_color(TUNNEL_PORTAL_COLOR, fog_color, fog_pct)
                      out_hw = TUNNEL_HALF_WIDTH + TUNNEL_PORTAL_THICKNESS
                      out_h = TUNNEL_HEIGHT + TUNNEL_PORTAL_THICKNESS
-                     for k in range(TUNNEL_ARC_SEGMENTS):
-                         t0 = math.pi * k / TUNNEL_ARC_SEGMENTS
-                         t1 = math.pi * (k + 1) / TUNNEL_ARC_SEGMENTS
+                     for k in range(arc_n):
+                         t0 = math.pi * k / arc_n
+                         t1 = math.pi * (k + 1) / arc_n
                          pygame.draw.polygon(screen, portal_color, [
                              tunnel_arc_pt(t0, x1, y1, s1, out_hw, out_h),
                              tunnel_arc_pt(t1, x1, y1, s1, out_hw, out_h),
