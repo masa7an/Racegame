@@ -23,10 +23,12 @@ EDGE_ROUGHNESS_ENABLED = True   # でこぼこ有効/無効
 EDGE_ROUGHNESS_AMOUNT = 22.0    # でこぼこの最大ピクセル数
 
 # Tunnel Settings (Stage6 単発ギミック — docs/tunnel_requirements.md 参照)
-TUNNEL_HEIGHT = 3000.0                             # 路面からの天井高さ（world units、CAMERA_HEIGHT=1500の2倍）
-TUNNEL_HALF_WIDTH = ROAD_WORLD_WIDTH / 2 * 1.15    # 中心から壁までの距離（道路端より15%外側）
-TUNNEL_WALL_COLOR = (62, 60, 64)                   # 側壁の基本色
-TUNNEL_CEILING_COLOR = (44, 43, 47)                # 天井の基本色（壁より暗く）
+# 断面は半楕円（円柱を横に半分に割った形）。TUNNEL_HEIGHTとTUNNEL_HALF_WIDTHが
+# 弧の縦横それぞれの半径にあたる（両者が等しければ真円の半分になる）。
+TUNNEL_HEIGHT = 3000.0                             # 路面からアーチ頂点までの高さ（world units）
+TUNNEL_HALF_WIDTH = ROAD_WORLD_WIDTH / 2 * 1.15    # 中心からアーチ両端（路面との接点）までの距離
+TUNNEL_ARC_SEGMENTS = 8                            # 弧を近似するポリゴン分割数
+TUNNEL_ARCH_COLOR = (55, 53, 57)                   # アーチ全体の色（単色、陰影なし）
 TUNNEL_FOG_COLOR = (14, 14, 17)                    # トンネル奥の到達色（通常フォグの代わりに暗闇へフェード）
 
 PROJECTION_PLANE_DIST = 300.0
@@ -681,33 +683,24 @@ class Track:
                      pygame.draw.line(screen, border_color,
                                      (x1 + w1/2, y1), (x2 + w2/2, y2), 2)
 
-             # ===== Tunnel Section (天井・側壁 — Stage6 単発ギミック) =====
-             # 道路と同じ透視スケール(s1/s2)で、路面から TUNNEL_HEIGHT 上に天井、
-             # 左右 TUNNEL_HALF_WIDTH に側壁の台形ポリゴンを重ね描きする。
+             # ===== Tunnel Section (半楕円アーチ — Stage6 単発ギミック) =====
+             # 道路と同じ透視スケール(s1/s2)で、路面レベル(theta=0/pi)からアーチ頂点(theta=pi/2)
+             # までを TUNNEL_ARC_SEGMENTS 分割の台形ポリゴンで近似し、円柱を割ったような弧を描く。
              # フォグは通常のfog_colorではなく暗闇(TUNNEL_FOG_COLOR)へフェードさせる。
              if in_tunnel:
-                 # 天井のスクリーンY（路面Yから高さ分を透視スケールで引き上げ）
-                 y1_ceil = y1 - TUNNEL_HEIGHT * s1
-                 y2_ceil = y2 - TUNNEL_HEIGHT * s2
-                 # 壁のスクリーンX（道路中心から左右へ）
-                 hw1 = TUNNEL_HALF_WIDTH * s1
-                 hw2 = TUNNEL_HALF_WIDTH * s2
+                 arch_color = Track.interpolate_color(TUNNEL_ARCH_COLOR, TUNNEL_FOG_COLOR, fog_pct)
 
-                 wall_color = Track.interpolate_color(TUNNEL_WALL_COLOR, TUNNEL_FOG_COLOR, fog_pct)
-                 ceil_color = Track.interpolate_color(TUNNEL_CEILING_COLOR, TUNNEL_FOG_COLOR, fog_pct)
+                 near_pts = []
+                 far_pts = []
+                 for k in range(TUNNEL_ARC_SEGMENTS + 1):
+                     theta = math.pi * k / TUNNEL_ARC_SEGMENTS
+                     cos_t, sin_t = math.cos(theta), math.sin(theta)
+                     near_pts.append((x1 + TUNNEL_HALF_WIDTH * cos_t * s1, y1 - TUNNEL_HEIGHT * sin_t * s1))
+                     far_pts.append((x2 + TUNNEL_HALF_WIDTH * cos_t * s2, y2 - TUNNEL_HEIGHT * sin_t * s2))
 
-                 # 左壁（路面→天井の縦面）
-                 pygame.draw.polygon(screen, wall_color, [
-                     (x1 - hw1, y1), (x2 - hw2, y2),
-                     (x2 - hw2, y2_ceil), (x1 - hw1, y1_ceil)])
-                 # 右壁
-                 pygame.draw.polygon(screen, wall_color, [
-                     (x1 + hw1, y1), (x2 + hw2, y2),
-                     (x2 + hw2, y2_ceil), (x1 + hw1, y1_ceil)])
-                 # 天井（下から見上げた面）
-                 pygame.draw.polygon(screen, ceil_color, [
-                     (x1 - hw1, y1_ceil), (x1 + hw1, y1_ceil),
-                     (x2 + hw2, y2_ceil), (x2 - hw2, y2_ceil)])
+                 for k in range(TUNNEL_ARC_SEGMENTS):
+                     pygame.draw.polygon(screen, arch_color, [
+                         near_pts[k], near_pts[k + 1], far_pts[k + 1], far_pts[k]])
 
              # Goal Line
              if seg['p1']['z'] <= GOAL_DISTANCE < seg['p2']['z']:
