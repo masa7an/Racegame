@@ -118,9 +118,14 @@ def main():
     total_time_result = 0.0
     
     # Replay Variables
-    replay_data = [] 
+    replay_data = []
     replay_index = 0
     replay_active = False
+
+    # [FIX 2026-07-17] Previous-frame state of the menu/replay inputs. The B button
+    # both exits the replay and is "Exit" on the GAME_CLEAR screen, so a held B ran
+    # both actions on consecutive frames and quit the game. These are edge-triggered.
+    prev_menu_input = {'continue': False, 'exit': False, 'replay': False}
     
     # Initial Route Setup
     track.create_road(stage_id)
@@ -180,6 +185,18 @@ def main():
 
 
             keys = pygame.key.get_pressed()
+
+            # Raw (held) state of the menu/replay inputs, then the rising edges.
+            # 'exit' doubles as the replay's brake-to-quit input (B button / Down).
+            menu_input = {
+                'continue': bool(keys[pygame.K_RETURN] or keys[pygame.K_SPACE] or keys[pygame.K_c]
+                                 or (joystick and joystick.get_button(0))),  # A button
+                'exit': bool(keys[pygame.K_ESCAPE] or keys[pygame.K_e] or keys[pygame.K_DOWN]
+                             or keys[pygame.K_b] or (joystick and joystick.get_button(1))),  # B button
+                'replay': bool(keys[pygame.K_r] or (joystick and joystick.get_button(2))),  # X button
+            }
+            menu_pressed = {k: v and not prev_menu_input[k] for k, v in menu_input.items()}
+            prev_menu_input = menu_input
 
             # --- Update ---
             
@@ -400,14 +417,8 @@ def main():
             
             elif current_state == STATE_GAME_CLEAR:
                  # Handle Continue / Exit / Replay
-                 keys = pygame.key.get_pressed()
-                 
                  # "Continue" (Restart from Stage 1) -> Enter or Space or C or A button
-                 continue_pressed = keys[pygame.K_RETURN] or keys[pygame.K_SPACE] or keys[pygame.K_c]
-                 if joystick and joystick.get_button(0):  # A button
-                     continue_pressed = True
-                 
-                 if continue_pressed:
+                 if menu_pressed['continue']:
                      # Restart Game
                      stage_id = 0 # Will incr to 1 in INIT
                      stage_times = {}
@@ -421,19 +432,11 @@ def main():
                      continue # Skip rendering this frame (avoid stage_id=0 crash)
                      
                  # "Exit" -> Escape or E or B button
-                 exit_pressed = keys[pygame.K_ESCAPE] or keys[pygame.K_e]
-                 if joystick and joystick.get_button(1):  # B button
-                     exit_pressed = True
-                 
-                 if exit_pressed:
+                 if menu_pressed['exit']:
                      running = False
-                     
+
                  # "Replay" -> R or X button
-                 replay_pressed = keys[pygame.K_r]
-                 if joystick and joystick.get_button(2):  # X button
-                     replay_pressed = True
-                 
-                 if replay_pressed:
+                 if menu_pressed['replay']:
                      current_state = STATE_REPLAY
                      replay_index = 0
                      replay_active = True
@@ -447,8 +450,7 @@ def main():
                          stage_id = first_stage
                          track.create_road(stage_id)
                          bg_manager.set_stage(stage_id)
-                     # Wait for key release ideally, but K_r transition is fine
-                     
+
             elif current_state == STATE_REPLAY:
                  if replay_index < len(replay_data):
                      d = replay_data[replay_index]
@@ -502,7 +504,8 @@ def main():
                  # Exit Replay (Brake)
                  # [FIX 2026-07-17] Was button(0)=A, same button as CONTINUE on the next
                  # screen, causing an immediate unintended restart. Brake is button(1)=B.
-                 if keys[pygame.K_DOWN] or keys[pygame.K_b] or (joystick and joystick.get_button(1)):
+                 # Edge-triggered, so holding B does not also fire "Exit" on GAME_CLEAR.
+                 if menu_pressed['exit']:
                      current_state = STATE_GAME_CLEAR
 
             # [FIX 2026-07-17] Runs every state (not just STATE_PLAYING) so dust/sand/
