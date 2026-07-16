@@ -32,6 +32,11 @@ TUNNEL_ARCH_COLOR = (55, 53, 57)                   # アーチ全体の色（単
 TUNNEL_FLOOR_COLOR = (72, 70, 74)                  # 路肩の床色（コンクリート想定。道路端〜アーチ根元を埋める）
 TUNNEL_FOG_COLOR = (14, 14, 17)                    # トンネル奥の到達色（通常フォグの代わりに暗闇へフェード）
 
+# Tunnel Entrance Portal (入口の厚み — 薄い板に見えないよう小口面を描く)
+# 入口面に外枠アーチ（半径+厚み）と内枠アーチ（＝坑内の弧）の二重ポリゴンを取り、間を埋める。
+TUNNEL_PORTAL_THICKNESS = 170.0                    # 小口の厚み（world units。ROAD_WORLD_WIDTH=約10m換算で約50cm）
+TUNNEL_PORTAL_COLOR = (120, 118, 122)              # 小口面の色（外光に照らされたコンクリート想定）
+
 # Tunnel Ceiling Lights (天井ライト — 装飾のみ、路面への影響なし)
 # 左右2灯に分離。弧のファセット分割(TUNNEL_ARC_SEGMENTS)とは独立した角度で自由に配置・サイズ調整する。
 TUNNEL_LIGHT_COLOR = (255, 130, 30)                # ライトの色（オレンジ寄りの暖色系）
@@ -762,8 +767,8 @@ class Track:
              if in_tunnel:
                  arch_color = Track.interpolate_color(TUNNEL_ARCH_COLOR, TUNNEL_FOG_COLOR, fog_pct)
 
-                 def tunnel_arc_pt(theta, x, y, s):
-                     return (x + TUNNEL_HALF_WIDTH * math.cos(theta) * s, y - TUNNEL_HEIGHT * math.sin(theta) * s)
+                 def tunnel_arc_pt(theta, x, y, s, hw=TUNNEL_HALF_WIDTH, h=TUNNEL_HEIGHT):
+                     return (x + hw * math.cos(theta) * s, y - h * math.sin(theta) * s)
 
                  near_pts = []
                  far_pts = []
@@ -794,6 +799,25 @@ class Track:
                          # にじみは本体の形をぼかして作るので、発光用Surfaceへ描くのも本体と同じ形でよい
                          if tunnel_glow_surf is not None:
                              pygame.draw.polygon(tunnel_glow_surf, glow_color, quad)
+
+                 # 入口セグメントにだけ、坑口の小口面（＝厚み）を描く。入口面上に外枠アーチ
+                 # （半径 +THICKNESS）と内枠アーチ（＝坑内の弧と同じ半径）の二重ポリゴンを取り、
+                 # 間をファセット単位の四角形で埋める。坑内の弧より外側なのでZファイティングはない。
+                 # 奥行き方向へは延ばさない：内枠から奥は坑内の弧そのものが既に埋めているので
+                 # 重ねると近距離でその面を舐めるように見て画面全体が小口色で覆われる。
+                 # 小口面は坑外（外光側）なので、フォグは暗闇ではなく通常のfog_colorへ寄せる。
+                 if (seg['p1']['z'] - STRIPE_LENGTH) < tunnel_start:
+                     portal_color = Track.interpolate_color(TUNNEL_PORTAL_COLOR, fog_color, fog_pct)
+                     out_hw = TUNNEL_HALF_WIDTH + TUNNEL_PORTAL_THICKNESS
+                     out_h = TUNNEL_HEIGHT + TUNNEL_PORTAL_THICKNESS
+                     for k in range(TUNNEL_ARC_SEGMENTS):
+                         t0 = math.pi * k / TUNNEL_ARC_SEGMENTS
+                         t1 = math.pi * (k + 1) / TUNNEL_ARC_SEGMENTS
+                         pygame.draw.polygon(screen, portal_color, [
+                             tunnel_arc_pt(t0, x1, y1, s1, out_hw, out_h),
+                             tunnel_arc_pt(t1, x1, y1, s1, out_hw, out_h),
+                             tunnel_arc_pt(t1, x1, y1, s1),
+                             tunnel_arc_pt(t0, x1, y1, s1)])
 
              # Goal Line
              if seg['p1']['z'] <= GOAL_DISTANCE < seg['p2']['z']:
