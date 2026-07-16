@@ -31,6 +31,14 @@ TUNNEL_ARC_SEGMENTS = 8                            # 弧を近似するポリゴ
 TUNNEL_ARCH_COLOR = (55, 53, 57)                   # アーチ全体の色（単色、陰影なし）
 TUNNEL_FOG_COLOR = (14, 14, 17)                    # トンネル奥の到達色（通常フォグの代わりに暗闇へフェード）
 
+# Tunnel Ceiling Lights (天井ライト — 装飾のみ、路面への影響なし)
+# 左右2灯に分離。弧のファセット分割(TUNNEL_ARC_SEGMENTS)とは独立した角度で自由に配置・サイズ調整する。
+TUNNEL_LIGHT_COLOR = (255, 225, 150)               # ライトの色（暖色系）
+TUNNEL_LIGHT_CENTER_OFFSET = math.radians(20.0)    # アーチ頂点(theta=90°)から左右ライト中心までの角度
+TUNNEL_LIGHT_HALF_ANGLE = math.radians(7.0)        # 各ライトの半幅角度（小さめサイズ）
+TUNNEL_LIGHT_SPACING = 4                           # ライトの周期（セグメント数）
+TUNNEL_LIGHT_ON_LENGTH = 2                          # 周期のうち点灯させるセグメント数（密な配置）
+
 PROJECTION_PLANE_DIST = 300.0
 HORIZON_Y = 300
 CAMERA_HEIGHT = 1500.0
@@ -690,17 +698,31 @@ class Track:
              if in_tunnel:
                  arch_color = Track.interpolate_color(TUNNEL_ARCH_COLOR, TUNNEL_FOG_COLOR, fog_pct)
 
+                 def tunnel_arc_pt(theta, x, y, s):
+                     return (x + TUNNEL_HALF_WIDTH * math.cos(theta) * s, y - TUNNEL_HEIGHT * math.sin(theta) * s)
+
                  near_pts = []
                  far_pts = []
                  for k in range(TUNNEL_ARC_SEGMENTS + 1):
                      theta = math.pi * k / TUNNEL_ARC_SEGMENTS
-                     cos_t, sin_t = math.cos(theta), math.sin(theta)
-                     near_pts.append((x1 + TUNNEL_HALF_WIDTH * cos_t * s1, y1 - TUNNEL_HEIGHT * sin_t * s1))
-                     far_pts.append((x2 + TUNNEL_HALF_WIDTH * cos_t * s2, y2 - TUNNEL_HEIGHT * sin_t * s2))
+                     near_pts.append(tunnel_arc_pt(theta, x1, y1, s1))
+                     far_pts.append(tunnel_arc_pt(theta, x2, y2, s2))
 
                  for k in range(TUNNEL_ARC_SEGMENTS):
                      pygame.draw.polygon(screen, arch_color, [
                          near_pts[k], near_pts[k + 1], far_pts[k + 1], far_pts[k]])
+
+                 # 天井ライト: 頂点(theta=pi/2)から左右に離した2灯を、弧の分割とは独立した角度で重ね描き
+                 light_on = (seg['index'] % TUNNEL_LIGHT_SPACING) < TUNNEL_LIGHT_ON_LENGTH
+                 if light_on:
+                     light_color = Track.interpolate_color(TUNNEL_LIGHT_COLOR, TUNNEL_FOG_COLOR, fog_pct)
+                     for side in (-1, 1):
+                         center_theta = math.pi / 2 + side * TUNNEL_LIGHT_CENTER_OFFSET
+                         t0 = center_theta - TUNNEL_LIGHT_HALF_ANGLE
+                         t1 = center_theta + TUNNEL_LIGHT_HALF_ANGLE
+                         pygame.draw.polygon(screen, light_color, [
+                             tunnel_arc_pt(t0, x1, y1, s1), tunnel_arc_pt(t1, x1, y1, s1),
+                             tunnel_arc_pt(t1, x2, y2, s2), tunnel_arc_pt(t0, x2, y2, s2)])
 
              # Goal Line
              if seg['p1']['z'] <= GOAL_DISTANCE < seg['p2']['z']:
