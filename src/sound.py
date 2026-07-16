@@ -15,11 +15,10 @@ class SoundManager:
         self.channels = {}
         self.sounds = {}
         
-        # Path to engine.wav (Assumes it's in the same directory as this script)
-        # However, main.py is running from project root often, or test/v18 depending on how it's executed.
-        # Check current working directory to decide path
+        # Path to engine.wav: this file lives in src/, while asset/ is a sibling
+        # of src/ under the project root, so we need to go up one level.
         base_path = os.path.dirname(os.path.abspath(__file__))
-        wav_path = os.path.join(base_path, "asset", "engine.wav")
+        wav_path = os.path.join(base_path, "..", "asset", "engine.wav")
         
         if not os.path.exists(wav_path):
             print(f"Warning: {wav_path} not found. Engine sound will be disabled.")

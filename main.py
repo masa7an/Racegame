@@ -35,14 +35,25 @@ def save_ranking(new_score):
     """
     file_path = "ranking.json"
     scores = []
-    
+
     # Read existing
+    # [FIX 2026-07-17] utf-8-sig tolerates a BOM-prefixed file (seen in practice).
+    # On any other read failure, back up the file instead of silently discarding
+    # it, since falling through to scores=[] would overwrite it with just the
+    # new score.
     if os.path.exists(file_path):
         try:
-            with open(file_path, "r", encoding="utf-8") as f:
+            with open(file_path, "r", encoding="utf-8-sig") as f:
                 scores = json.load(f)
         except Exception as e:
             print(f"Error reading ranking: {e}")
+            try:
+                backup_path = file_path + ".bak"
+                os.replace(file_path, backup_path)
+                print(f"Corrupted ranking file backed up to {backup_path}")
+            except Exception as be:
+                print(f"Error backing up ranking file: {be}")
+            scores = []
 
     # Add new and sort
     scores.append(new_score)
@@ -141,23 +152,30 @@ def main():
                     running = False
                 
                 if event.type == pygame.KEYDOWN:
-                    # Debug Keys
-                    if event.key == pygame.K_F1:
-                        # Warp near goal
-                        if current_state == STATE_PLAYING and track.goal_distance > 1000:
-                            car.z = track.goal_distance - 1000.0
-                    elif event.key == pygame.K_F2:
-                        current_state = STATE_NEXT_STAGE_INIT
-                    elif event.key == pygame.K_F3:
-                        stage_id = max(1, stage_id - 1)
-                        stage_id -= 1 # Logic below handles +1, so decrement to re-init same or prev
-                        current_state = STATE_NEXT_STAGE_INIT
-                    elif event.key == pygame.K_0:
+                    # <DEBUG 2026-07-17> Dev/tuning keys, only active during play.
+                    # [FIX 2026-07-17] F2/F3 lacked the STATE_PLAYING guard that F1 has,
+                    # so pressing F2 on the GAME_CLEAR screen re-entered
+                    # STATE_NEXT_STAGE_INIT with stage_id already > 5 and called
+                    # save_ranking() again, duplicating the just-saved score.
+                    if current_state == STATE_PLAYING:
+                        if event.key == pygame.K_F1:
+                            # Warp near goal
+                            if track.goal_distance > 1000:
+                                car.z = track.goal_distance - 1000.0
+                        elif event.key == pygame.K_F2:
+                            current_state = STATE_NEXT_STAGE_INIT
+                        elif event.key == pygame.K_F3:
+                            stage_id = max(1, stage_id - 1)
+                            stage_id -= 1 # Logic below handles +1, so decrement to re-init same or prev
+                            current_state = STATE_NEXT_STAGE_INIT
+                        elif event.key == pygame.K_u:
+                            bg_manager.adjust_ground_offset(1)
+                        elif event.key == pygame.K_j:
+                            bg_manager.adjust_ground_offset(-1)
+                    # </DEBUG>
+
+                    if event.key == pygame.K_0:
                         sound_manager.toggle_mute()
-                    elif event.key == pygame.K_u:
-                        bg_manager.adjust_ground_offset(1)
-                    elif event.key == pygame.K_j:
-                        bg_manager.adjust_ground_offset(-1)
 
 
             keys = pygame.key.get_pressed()
@@ -396,6 +414,7 @@ def main():
                      # Restart Game
                      stage_id = 0 # Will incr to 1 in INIT
                      stage_times = {}
+                     replay_data = [] # [FIX 2026-07-17] Clear stale replay from previous run
                      smoothed_camera_y = 0.0
                      smoothed_slope = 0.0
                      current_state = STATE_NEXT_STAGE_INIT
@@ -474,7 +493,9 @@ def main():
                      current_state = STATE_GAME_CLEAR
                      
                  # Exit Replay (Brake)
-                 if keys[pygame.K_DOWN] or keys[pygame.K_b] or (joystick and joystick.get_button(0)):
+                 # [FIX 2026-07-17] Was button(0)=A, same button as CONTINUE on the next
+                 # screen, causing an immediate unintended restart. Brake is button(1)=B.
+                 if keys[pygame.K_DOWN] or keys[pygame.K_b] or (joystick and joystick.get_button(1)):
                      current_state = STATE_GAME_CLEAR
 
             # --- Rendering ---
