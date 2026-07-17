@@ -208,39 +208,6 @@ def main():
                     running = False
                 
                 if event.type == pygame.KEYDOWN:
-                    # <DEBUG 2026-07-17> Dev/tuning keys, only active during play.
-                    # [FIX 2026-07-17] F2/F3 lacked the STATE_PLAYING guard that F1 has,
-                    # so pressing F2 on the GAME_CLEAR screen re-entered
-                    # STATE_NEXT_STAGE_INIT with stage_id already > 5 and called
-                    # save_ranking() again, duplicating the just-saved score.
-                    if current_state == STATE_PLAYING:
-                        if event.key == pygame.K_F1:
-                            # Warp near goal
-                            if track.goal_distance > 1000:
-                                car.z = track.goal_distance - 1000.0
-                        elif event.key == pygame.K_F2:
-                            current_state = STATE_NEXT_STAGE_INIT
-                        elif event.key == pygame.K_F3:
-                            stage_id = max(1, stage_id - 1)
-                            stage_id -= 1 # Logic below handles +1, so decrement to re-init same or prev
-                            current_state = STATE_NEXT_STAGE_INIT
-                        elif event.key == pygame.K_u:
-                            bg_manager.adjust_ground_offset(1)
-                        elif event.key == pygame.K_j:
-                            bg_manager.adjust_ground_offset(-1)
-                        elif event.key == pygame.K_m:
-                            # 既知の問題②のA/B比較: 地面テクスチャの
-                            # 新(41800+smoothscale縮小) ⇔ 旧(24000+nearest) を切替
-                            from src import background as bg_mod
-                            gl = bg_manager.ground_layer
-                            if gl:
-                                gl.antialias = not gl.antialias
-                                bg_mod.GROUND_TEXTURE_WORLD_WIDTH = (
-                                    41800.0 if gl.antialias else 24000.0)
-                                log_info(f"Ground mode: "
-                                         f"{'NEW(41800+smooth)' if gl.antialias else 'OLD(24000+nearest)'}")
-                    # </DEBUG>
-
                     if event.key == pygame.K_0:
                         sound_manager.toggle_mute()
 
