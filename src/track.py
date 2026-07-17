@@ -36,9 +36,10 @@ TUNNEL_ARC_SEGMENTS_MAX = 24                       # 至近距離での分割数
 TUNNEL_ARCH_COLOR = (55, 53, 57)                   # アーチ全体の色（単色、陰影なし）
 TUNNEL_FLOOR_COLOR = (72, 70, 74)                  # 路肩の床色（コンクリート想定。道路端〜アーチ根元を埋める）
 TUNNEL_FOG_COLOR = (14, 14, 17)                    # トンネル奥の到達色（通常フォグの代わりに暗闇へフェード）
-TUNNEL_SHADOW_SOFTEN = 1.6                         # 内部の明暗境界(手前=入口付近の明るさ/奥=暗闇)をぼかす倍率。
-                                                   # fog_pctをこの値で割ってから使うことで暗闇へ落ちる距離を
-                                                   # 伸ばし、境目のグラデーションを緩やかにする
+TUNNEL_SHADOW_SOFTEN = 7.5                         # 内部の明暗境界(手前=入口付近の明るさ/奥=暗闇)をぼかす倍率。
+                                                   # fog_pct ** (1/この値) のべき乗カーブで、手前から緩やかに
+                                                   # 暗くなり始めつつ奥は完全な暗闇(1.0)へ到達させる。
+                                                   # 1.0=補正なし、大きいほど影が手前へ広がり境目が緩やかになる
 
 # Tunnel Entrance Portal (入口の厚み — 薄い板に見えないよう小口面を描く)
 # 入口面に外枠アーチ（半径+厚み）と内枠アーチ（＝坑内の弧）の二重ポリゴンを取り、間を埋める。
@@ -77,6 +78,8 @@ TUNNEL_LIGHT_GLOW_LEVELS = (
     (12, 0.7),                                     # 広く薄いにじみ
 )
 TUNNEL_LIGHT_GLOW_INTENSITY = 1.0                  # グロー全体の強さ倍率
+TUNNEL_LIGHT_SHADOW_RELIEF = 0.25                  # ライト(本体・にじみ)だけ暗化を緩める割合。TUNNEL_SHADOW_SOFTEN後の
+                                                   # 値をこのぶん減らして使う。0=壁と同じ暗さ、0.25なら25%明るく残る
 TUNNEL_LIGHT_GLOW_SURF_DOWNSCALE = 2               # 発光用Surfaceの解像度分周率。にじみはどのみち縮小→拡大の
                                                    # ブラーを通すため低解像度で描いても見た目はほぼ変わらず、
                                                    # ライト・遮蔽(黒消し)の塗りコストが1/分周率^2になる。
@@ -776,8 +779,11 @@ class Track:
              # Use specific road fog color if defined, else global fog color
              if in_tunnel:
                  target_fog = TUNNEL_FOG_COLOR
-                 # トンネル内部の明暗境界(手前の明るさ→奥の暗闇)をぼかし、影の遷移範囲を広げる
-                 tunnel_fog_pct = min(1.0, fog_pct / TUNNEL_SHADOW_SOFTEN)
+                 # トンネル内部の明暗境界(手前の明るさ→奥の暗闇)をぼかし、影の遷移範囲を広げる。
+                 # 除算(fog_pct/SOFTEN)だと奥の到達暗度ごと下がってしまう（水平線付近でも
+                 # 1/2.5=0.4までしか暗くならず、グラデーションも0〜0.4に圧縮されて見えなくなる）。
+                 # べき乗なら手前は緩やかに暗くなり始め、奥は必ず1.0（完全な暗闇）へ到達する。
+                 tunnel_fog_pct = min(1.0, fog_pct) ** (1.0 / TUNNEL_SHADOW_SOFTEN)
              else:
                  target_fog = cfg.get('road_fog_color', fog_color)
                  tunnel_fog_pct = fog_pct
@@ -1002,6 +1008,17 @@ class Track:
                      near_pts.append(tunnel_arc_pt(theta, x1, y1, s1))
                      far_pts.append(tunnel_arc_pt(theta, x2, y2, s2))
 
+                 # 最遠の可視断面を暗闇で塞ぐ。塞がないと筒が描画距離の果てで途切れ、
+                 # そこから背景（空・地平線・草）が坑内の奥に透けて見える。トンネルは
+                 # DRAW_DISTANCEより長いので、これは本物の出口ではなく描画の打ち切り面。
+                 # 遠くから覗いたとき出口がすぐそこにあるように見える正体がこれ。
+                 # far_pts は theta=0..pi の半楕円で、始点と終点が路面レベルで閉じるため
+                 # そのまま塗れば断面全体になる。この位置は fog_pct=1.0 で壁自体が
+                 # TUNNEL_FOG_COLOR に達しているので、蓋は壁と継ぎ目なく溶ける。
+                 # 出口が描画距離の内側に入ったら塞がない（本物の出口の外光を見せる）。
+                 if i == max_idx and cur_tunnel[1] > player_z + DRAW_DISTANCE:
+                     pygame.draw.polygon(screen, TUNNEL_FOG_COLOR, far_pts)
+
                  for k in range(arc_n):
                      pygame.draw.polygon(screen, arch_color, [
                          near_pts[k], near_pts[k + 1], far_pts[k + 1], far_pts[k]])
@@ -1021,9 +1038,11 @@ class Track:
                  # 天井ライト: 頂点(theta=pi/2)から左右に離した2灯を、弧の分割とは独立した角度で重ね描き
                  light_on = (seg['index'] % TUNNEL_LIGHT_SPACING) < TUNNEL_LIGHT_ON_LENGTH
                  if light_on:
-                     light_color = Track.interpolate_color(TUNNEL_LIGHT_COLOR, TUNNEL_FOG_COLOR, tunnel_fog_pct)
+                     # 光源なので壁ほど暗闇に沈まない。暗化をTUNNEL_LIGHT_SHADOW_RELIEFのぶん緩める
+                     light_fog_pct = tunnel_fog_pct * (1.0 - TUNNEL_LIGHT_SHADOW_RELIEF)
+                     light_color = Track.interpolate_color(TUNNEL_LIGHT_COLOR, TUNNEL_FOG_COLOR, light_fog_pct)
                      # 発光色は奥ほど黒へ落とす（黒＝発光なしなので、奥のライトのにじみが自然に弱まる）
-                     glow_color = Track.interpolate_color(TUNNEL_LIGHT_COLOR, (0, 0, 0), tunnel_fog_pct)
+                     glow_color = Track.interpolate_color(TUNNEL_LIGHT_COLOR, (0, 0, 0), light_fog_pct)
                      for side in (-1, 1):
                          center_theta = math.pi / 2 + side * TUNNEL_LIGHT_CENTER_OFFSET
                          t0 = center_theta - TUNNEL_LIGHT_HALF_ANGLE
