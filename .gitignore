@@ -5,11 +5,7 @@ __pycache__/
 *.so
 
 # Assets (managed outside git)
-# 「asset/」ではなく「asset/*」にしてあるのは、ディレクトリ自体を除外すると
-# gitがその中のファイルを再包含できず、下の !asset/screenshot.png が効かなくなるため。
-asset/*
-# READMEが参照するスクリーンショットだけは例外（除外すると公開ページで画像リンクが壊れる）。
-!asset/screenshot.png
+asset/
 
 # Logs
 logs/
