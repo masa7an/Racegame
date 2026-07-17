@@ -28,6 +28,14 @@ STATE_REPLAY = 5 # NEW: Replay Mode
 STATE_SETTINGS = 6 # Volume settings overlay (can be entered from any other state)
 
 # Volume Settings Constants
+# トンネルの壁を擦ったときに火花を出し始める速度（内部単位）。コーナリングの火花は
+# 最高速域(150.0 ≈ 310km/h)専用だが、壁擦りはそれより下から出す。
+# 注意: 壁(TUNNEL_WALL_LIMIT=1200)はオフロード境界(約1025)より外にあるため、壁に触れている
+# 間は必ずオフロード扱いで速度がOFFROAD_MAX_SPEED(32.4 ≈ 67km/h)に張り付く。中速域(100km/h
+# ≈ 48.5)を閾値にすると高速で突っ込んだ直後の減速中しか火花が出ないので、擦っている間ずっと
+# 出るよう路肩の砂埃と同じ10.0に合わせている。ここを32.4より上げると火花はほぼ出なくなる。
+WALL_SPARK_MIN_SPEED = 10.0
+
 SETTINGS_FILE = "settings.json"
 BGM_BASE_VOLUME = 0.5  # BGM volume at master_volume = 1.0
 DEFAULT_MASTER_VOLUME = 0.7  # Used when no settings.json exists yet
@@ -441,9 +449,23 @@ def main():
                     
                     if should_spark:
                          # User req: y-10px (Total -20 from bottom)
-                         spark_y = car.rect.bottom - 20 
+                         spark_y = car.rect.bottom - 20
                          effects.add_spark(spark_x, spark_y, flip_x=spark_flip)
-                
+
+                # Sparks (Tunnel Wall Scrape)
+                # 壁を擦っている間は、上のコーナリング火花と違って最高速(150.0)を待たずに出す
+                # （閾値はWALL_SPARK_MIN_SPEEDの定義を参照）。見た目・位置は上と同じ火花。
+                # 接触は連続する（コーナーの一瞬とは違う）ので発生頻度は上より高め。
+                if car.wall_contact != 0 and car.speed > WALL_SPARK_MIN_SPEED:
+                    if random.random() < 0.25:
+                        if car.wall_contact > 0:  # 右の壁
+                            wall_spark_x = car.rect.bottomright[0] + 15
+                            wall_spark_flip = True
+                        else:                     # 左の壁
+                            wall_spark_x = car.rect.bottomleft[0] - 15
+                            wall_spark_flip = False
+                        effects.add_spark(wall_spark_x, car.rect.bottom - 20, flip_x=wall_spark_flip)
+
                 # Goal Check (Use car front position for natural feel)
                 # Add forward offset: approximately half of car's visual length in world space
                 car_front_offset = 700.0  # 車の長さ + α

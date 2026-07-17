@@ -1,5 +1,6 @@
 import pygame
-from .track import STRIPE_LENGTH, ROAD_WORLD_WIDTH
+from .track import (STRIPE_LENGTH, ROAD_WORLD_WIDTH, TUNNEL_WALL_LIMIT,
+                    TUNNEL_WALL_PUSHBACK, TUNNEL_WALL_PUSHBACK_RATIO)
 
 # Physics Constants
 NORMAL_MAX_SPEED = 162.0     
@@ -25,6 +26,7 @@ class Car:
         self.player_y = player_y
         self.braking = False  # ブレーキ状態フラグ
         self.accel_pressed = False # アクセル状態フラグ（炎用）
+        self.wall_contact = 0  # トンネルの壁との接触方向（0=なし / -1=左 / +1=右）。update()で毎フレーム更新
         
         # Load Image
         try:
@@ -153,7 +155,28 @@ class Car:
         # Tire offset from center (based on actual car width, matching render logic)
         # Render uses: tire_ox = cw * 0.38 + 15, so we use similar calculation
         tire_offset = self.rect.width * 0.38 + 15.0
-        
+
+        # トンネル内では車を横に出さない。坑外へ抜けると背景が見えて絵が破綻する。
+        # 上限の決め方はTUNNEL_WALL_LIMITの定義を参照（アーチの実寸ではなく視界で決めている）。
+        # オフロード判定（中心から約1025）より外なので、路肩へ出て減速する余地は残る。
+        #
+        # wall_contactは壁への接触方向（0=非接触 / -1=左の壁 / +1=右の壁）で、火花の発生に使う。
+        # 擦っていなければ火花は出ないので、単に端にいるかではなく壁を押しているかで判定する
+        # 擦っていなければ火花は出ないので、単に端にいるかではなく壁を押しているかで判定する
+        # （ステアを離せばドリフトで壁から離れるため、押し続けている間だけ毎フレーム立つ）。
+        self.wall_contact = 0
+        if track.get_tunnel_at(self.z, stage_id=stage_id):
+            wall_limit = TUNNEL_WALL_LIMIT
+            overshoot = abs(self.x) - wall_limit
+            if overshoot > 0.0:
+                pushback = max(TUNNEL_WALL_PUSHBACK, overshoot * TUNNEL_WALL_PUSHBACK_RATIO)
+                if self.x > 0.0:
+                    self.x = max(wall_limit, self.x - pushback)
+                    self.wall_contact = 1
+                else:
+                    self.x = min(-wall_limit, self.x + pushback)
+                    self.wall_contact = -1
+
         self.offroad_l = (self.x - tire_offset) < left_limit
         self.offroad_r = (self.x + tire_offset) > right_limit
         self.offroad = self.offroad_l or self.offroad_r
