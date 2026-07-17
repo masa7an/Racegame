@@ -1,5 +1,5 @@
 import pygame
-from .track import STAGE_CONFIG, HORIZON_Y
+from .track import STAGE_CONFIG, HORIZON_Y, DRAW_DISTANCE
 
 # --- Ground Layer Config ---
 GROUND_RENDER_OFFSET_Y = 17 # Adjusts the Y start position of the ground layer relative to HORIZON_Y
@@ -407,46 +407,66 @@ class BackgroundManager:
             return (80, 60, 40)
     
     def _compute_tunnel_haze_mult(self, player_z):
-        """トンネル入口手前〜区間内〜出口後にかけて、地平線ヘイズの不透明度倍率(0〜1)を計算"""
+        """トンネル入口手前〜区間内〜出口後にかけて、地平線ヘイズの不透明度倍率(0〜1)を計算
+
+        ステージに複数のトンネル区間がありうるため、各区間ごとの倍率のうち最小値
+        （＝最も強く隠すべき区間の値）を採用する。区間から離れていれば全て1.0になる。
+        """
         if player_z is None:
             return 1.0
         cfg = STAGE_CONFIG.get(self.current_stage_id, {})
-        tunnel_start = cfg.get('tunnel_start_z')
-        if tunnel_start is None:
+        tunnels = cfg.get('tunnels', [])
+        if not tunnels:
             return 1.0
-        tunnel_end = tunnel_start + cfg.get('tunnel_length', 0.0)
         fade = TUNNEL_HAZE_FADE_DISTANCE
-        # 完全非表示になる境界（入口手前/出口先のマージン込み）
-        hide_start = tunnel_start - TUNNEL_HAZE_HIDE_MARGIN
-        hide_end = tunnel_end + TUNNEL_HAZE_HIDE_MARGIN
-        if player_z < hide_start - fade:
-            return 1.0
-        if player_z < hide_start:
-            return (hide_start - player_z) / fade
-        if player_z < hide_end:
-            return 0.0
-        if player_z < hide_end + fade:
-            return (player_z - hide_end) / fade
-        return 1.0
+        mult = 1.0
+        for t in tunnels:
+            tunnel_start = t['start_z']
+            tunnel_end = tunnel_start + t['length']
+            # 完全非表示になる境界（入口手前/出口先のマージン込み）
+            hide_start = tunnel_start - TUNNEL_HAZE_HIDE_MARGIN
+            hide_end = tunnel_end + TUNNEL_HAZE_HIDE_MARGIN
+            if player_z < hide_start - fade:
+                m = 1.0
+            elif player_z < hide_start:
+                m = (hide_start - player_z) / fade
+            elif player_z < hide_end:
+                m = 0.0
+            elif player_z < hide_end + fade:
+                m = (player_z - hide_end) / fade
+            else:
+                m = 1.0
+            mult = min(mult, m)
+        return mult
 
     def _compute_overlay_haze_mult(self, player_z):
-        """main.py側の霧オーバーレイ用倍率。坑口の山はトンネル手前ほぼ全域で画面に写るため、
-        入口側はフェード区間を設けずステージ開始（z=0）から即座に非表示にする。
-        出口側は通常どおり山が見えなくなった後にフェードで復帰する。"""
+        """main.py側の霧オーバーレイ用倍率。坑口の山は各トンネルの入口が描画距離
+        （DRAW_DISTANCE）に入った時点から画面に写るため、区間ごとにその手前から
+        即座に非表示にする（フェード区間は設けない）。出口側は通常どおり山が
+        見えなくなった後にフェードで復帰する。複数区間ある場合は最小値を採用する。"""
         if player_z is None:
             return 1.0
         cfg = STAGE_CONFIG.get(self.current_stage_id, {})
-        tunnel_start = cfg.get('tunnel_start_z')
-        if tunnel_start is None:
+        tunnels = cfg.get('tunnels', [])
+        if not tunnels:
             return 1.0
-        tunnel_end = tunnel_start + cfg.get('tunnel_length', 0.0)
-        hide_end = tunnel_end + TUNNEL_HAZE_HIDE_MARGIN
         fade = TUNNEL_HAZE_FADE_DISTANCE
-        if player_z < hide_end:
-            return 0.0
-        if player_z < hide_end + fade:
-            return (player_z - hide_end) / fade
-        return 1.0
+        mult = 1.0
+        for t in tunnels:
+            tunnel_start = t['start_z']
+            tunnel_end = tunnel_start + t['length']
+            hide_start = tunnel_start - DRAW_DISTANCE
+            hide_end = tunnel_end + TUNNEL_HAZE_HIDE_MARGIN
+            if player_z < hide_start:
+                m = 1.0
+            elif player_z < hide_end:
+                m = 0.0
+            elif player_z < hide_end + fade:
+                m = (player_z - hide_end) / fade
+            else:
+                m = 1.0
+            mult = min(mult, m)
+        return mult
 
     def _draw_gradient_band(self, screen, pitch_offset):
         """GroundLayer開始位置の手前に2段階グラデーション帯を描画（透明度付き）"""

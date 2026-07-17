@@ -147,10 +147,13 @@ STAGE_CONFIG = {
         'curve_freq': 0.05, 'curve_amp': 30.0,
         'curve_mult': 0.8,
         'sharp_prob': 0.1, 's_curve_prob': 0.1,
-        'curb_enabled': True,
-        # トンネル区間（固定位置・固定長）: docs/tunnel_requirements.md 3-1参照
-        'tunnel_start_z': 20000.0,
-        'tunnel_length': 21000.0,
+        'curb_enabled': False,  # ステージ6は縁石なし（トンネルギミック優先）
+        # トンネル区間（固定位置・固定長、複数区間）: docs/tunnel_requirements.md 3-1参照
+        'tunnels': [
+            {'start_z': 20000.0, 'length': 63000.0},
+            {'start_z': 200000.0, 'length': 63000.0},
+            {'start_z': 400000.0, 'length': 63000.0},
+        ],
     },
 }
 
@@ -394,13 +397,12 @@ class Track:
         return False, False
 
     def get_tunnel_at(self, z, stage_id=1):
-        """Returns True if the given z position is within the stage's tunnel section."""
+        """Returns True if the given z position is within any of the stage's tunnel sections."""
         cfg = STAGE_CONFIG.get(stage_id, STAGE_CONFIG[1])
-        tunnel_start = cfg.get('tunnel_start_z')
-        if tunnel_start is None:
-            return False
-        tunnel_end = tunnel_start + cfg.get('tunnel_length', 0.0)
-        return tunnel_start <= z < tunnel_end
+        for t in cfg.get('tunnels', []):
+            if t['start_z'] <= z < t['start_z'] + t['length']:
+                return True
+        return False
 
     @staticmethod
     def interpolate_color(c1, c2, t):
@@ -583,9 +585,8 @@ class Track:
         # Curb enabled check
         curb_enabled = cfg.get('curb_enabled', False)
 
-        # Tunnel section range (Stage6 gimmick)
-        tunnel_start = cfg.get('tunnel_start_z')
-        tunnel_end = (tunnel_start + cfg.get('tunnel_length', 0.0)) if tunnel_start is not None else 0.0
+        # Tunnel section ranges (Stage6 gimmick, may appear multiple times per stage)
+        tunnel_ranges = [(t['start_z'], t['start_z'] + t['length']) for t in cfg.get('tunnels', [])]
         
         # Find start segment
         start_idx = int(player_z / STRIPE_LENGTH)
@@ -638,15 +639,15 @@ class Track:
         # セグメントごとに変えると継ぎ目に空が覗く）。基準は最寄りのトンネル断面＝画面上で最も
         # 大きく写り、多角形が最も目立つ位置。トンネルが遠いフレームでは自動的に粗くなる。
         tunnel_arc_n = TUNNEL_ARC_SEGMENTS_MIN
-        if tunnel_start is not None:
-            nearest_z = max(tunnel_start, player_z + PROJECTION_PLANE_DIST)
-            if nearest_z < tunnel_end:
+        for t_start, t_end in tunnel_ranges:
+            nearest_z = max(t_start, player_z + PROJECTION_PLANE_DIST)
+            if nearest_z < t_end:
                 nearest_scale = PROJECTION_PLANE_DIST / (nearest_z - player_z)
-                tunnel_arc_n = Track._arc_segments_for(
-                    max(TUNNEL_HALF_WIDTH, TUNNEL_HEIGHT) * nearest_scale)
+                tunnel_arc_n = max(tunnel_arc_n, Track._arc_segments_for(
+                    max(TUNNEL_HALF_WIDTH, TUNNEL_HEIGHT) * nearest_scale))
 
         tunnel_glow_surf = None
-        if tunnel_start is not None:
+        if tunnel_ranges:
             if self._tunnel_glow_surf is None or self._tunnel_glow_size != (screen_width, screen_height):
                 self._tunnel_glow_surf = pygame.Surface((screen_width, screen_height))
                 self._tunnel_glow_size = (screen_width, screen_height)
@@ -753,7 +754,13 @@ class Track:
                  fog_pct = min(1.0, fog_pct + extra_fog)
                  
              # Tunnel section check (Stage6 gimmick) — 路面・縁石・壁のフォグ到達色を暗闇に切り替える
-             in_tunnel = tunnel_start is not None and tunnel_start <= seg['p1']['z'] < tunnel_end
+             # 複数区間ありうるため、このセグメントが属するトンネル区間を特定する
+             cur_tunnel = None
+             for t_start, t_end in tunnel_ranges:
+                 if t_start <= seg['p1']['z'] < t_end:
+                     cur_tunnel = (t_start, t_end)
+                     break
+             in_tunnel = cur_tunnel is not None
 
              # Use specific road fog color if defined, else global fog color
              if in_tunnel:
@@ -1012,7 +1019,7 @@ class Track:
                  # 小口面は坑外（外光側）なので、フォグは暗闇ではなく通常のfog_colorへ寄せる。
                  # 内枠は坑内の弧と同一平面・同一半径なので、分割数も弧と同じ arc_n を使う。
                  # ここだけ細かくすると内枠が弧より外へ張り出し、継ぎ目に空が覗く。
-                 if (seg['p1']['z'] - STRIPE_LENGTH) < tunnel_start:
+                 if (seg['p1']['z'] - STRIPE_LENGTH) < cur_tunnel[0]:
                      portal_color = Track.interpolate_color(TUNNEL_PORTAL_COLOR, fog_color, fog_pct)
                      out_hw = TUNNEL_HALF_WIDTH + TUNNEL_PORTAL_THICKNESS
                      out_h = TUNNEL_HEIGHT + TUNNEL_PORTAL_THICKNESS
