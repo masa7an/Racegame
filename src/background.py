@@ -429,6 +429,25 @@ class BackgroundManager:
             return (player_z - hide_end) / fade
         return 1.0
 
+    def _compute_overlay_haze_mult(self, player_z):
+        """main.py側の霧オーバーレイ用倍率。坑口の山はトンネル手前ほぼ全域で画面に写るため、
+        入口側はフェード区間を設けずステージ開始（z=0）から即座に非表示にする。
+        出口側は通常どおり山が見えなくなった後にフェードで復帰する。"""
+        if player_z is None:
+            return 1.0
+        cfg = STAGE_CONFIG.get(self.current_stage_id, {})
+        tunnel_start = cfg.get('tunnel_start_z')
+        if tunnel_start is None:
+            return 1.0
+        tunnel_end = tunnel_start + cfg.get('tunnel_length', 0.0)
+        hide_end = tunnel_end + TUNNEL_HAZE_HIDE_MARGIN
+        fade = TUNNEL_HAZE_FADE_DISTANCE
+        if player_z < hide_end:
+            return 0.0
+        if player_z < hide_end + fade:
+            return (player_z - hide_end) / fade
+        return 1.0
+
     def _draw_gradient_band(self, screen, pitch_offset):
         """GroundLayer開始位置の手前に2段階グラデーション帯を描画（透明度付き）"""
         if not self.layers or not self.ground_layer:
@@ -561,6 +580,8 @@ class BackgroundManager:
 
         # トンネル区間では地平線ヘイズ（上段/下段グラデ・霧グラデ）を手前からフェードアウト
         self._tunnel_haze_mult = self._compute_tunnel_haze_mult(player_z)
+        # main.py側の霧オーバーレイ用（坑口の山が見える間は即座に非表示）
+        self._overlay_haze_mult = self._compute_overlay_haze_mult(player_z)
         
         for layer in self.layers:
             layer.draw(screen, pitch_offset)  # 背景レイヤーは従来通り

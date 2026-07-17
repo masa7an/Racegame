@@ -635,17 +635,17 @@ def main():
                 bg_manager.set_curve_offset(accumulated_curve)
             
             # [TEST] 道路描画後の霧オーバーレイ（水平線近くを馴染ませる）
-            # トンネル区間では背景側のヘイズと同じ倍率でフェードアウトさせる
-            # （最前面に描かれるため、残るとアーチ・山の上に霧の帯が浮いて見える）
-            tunnel_haze_mult = getattr(bg_manager, '_tunnel_haze_mult', 1.0)
-            if current_fog_color and tunnel_haze_mult > 0.0:
+            # 坑口の山が画面に写っている間（トンネル手前ほぼ全域〜内部）は
+            # 最前面に霧の帯が浮いて見えるため即座に非表示にする
+            overlay_haze_mult = getattr(bg_manager, '_overlay_haze_mult', 1.0)
+            if current_fog_color and overlay_haze_mult > 0.0:
                 fog_overlay_height = 80  # 水平線から80px下まで
                 fog_overlay = pygame.Surface((SCREEN_WIDTH, fog_overlay_height), pygame.SRCALPHA)
                 for i in range(fog_overlay_height):
                     # 非線形グラデーション（三乗で上が濃く下が薄い）
                     t = i / float(fog_overlay_height)  # 0 (top) to 1 (bottom)
                     fade = (1.0 - t) ** 3  # 三乗で急激にフェード
-                    alpha = int(fade * 200 * tunnel_haze_mult)  # 最大200（強め）
+                    alpha = int(fade * 200 * overlay_haze_mult)  # 最大200（強め）
                     pygame.draw.line(fog_overlay, (*current_fog_color, alpha),
                                    (0, i), (SCREEN_WIDTH, i))
                 screen.blit(fog_overlay, (0, HORIZON_Y))
