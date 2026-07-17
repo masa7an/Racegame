@@ -2,6 +2,7 @@
 
 A retro-style pseudo-3D racing game built with Python and Pygame.
 
+![Version](https://img.shields.io/badge/Version-1.1-orange.svg)
 ![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)
 ![Pygame](https://img.shields.io/badge/Pygame-2.0+-green.svg)
 
@@ -9,7 +10,7 @@ A retro-style pseudo-3D racing game built with Python and Pygame.
 
 ## Features
 
-- 5 stages with unique characteristics (curves, sand, wet roads)
+- 6 stages with unique characteristics (curves, sand, wet roads, tunnels)
 - Pseudo-3D graphics with perspective scrolling
 - Digital speedometer and lap timer
 - Ranking system (Top 5 scores saved)
