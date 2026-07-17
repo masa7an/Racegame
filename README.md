@@ -33,8 +33,9 @@ pip install pygame
 
 If you cloned without Git LFS installed, run `git lfs pull` to fetch the assets.
 
-> **Note:** The engine sound (`asset/engine.wav`) is not included in this repository.
-> The game runs fine without it — the engine sound is simply disabled.
+> **Note:** The engine sound is fully included (`asset/engine_low/mid/high.wav`,
+> procedurally generated — no third-party audio). If the files are missing for any
+> reason, the game still runs fine with the engine sound disabled.
 
 ## How to Run
 
