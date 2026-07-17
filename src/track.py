@@ -77,6 +77,10 @@ TUNNEL_LIGHT_GLOW_LEVELS = (
     (12, 0.7),                                     # 広く薄いにじみ
 )
 TUNNEL_LIGHT_GLOW_INTENSITY = 1.0                  # グロー全体の強さ倍率
+TUNNEL_LIGHT_GLOW_SURF_DOWNSCALE = 2               # 発光用Surfaceの解像度分周率。にじみはどのみち縮小→拡大の
+                                                   # ブラーを通すため低解像度で描いても見た目はほぼ変わらず、
+                                                   # ライト・遮蔽(黒消し)の塗りコストが1/分周率^2になる。
+                                                   # ブラー初段の縮小率(GLOW_LEVELSの先頭)より小さくすること
 
 PROJECTION_PLANE_DIST = 300.0
 HORIZON_Y = 300
@@ -650,10 +654,14 @@ class Track:
                     max(TUNNEL_HALF_WIDTH, TUNNEL_HEIGHT) * nearest_scale))
 
         tunnel_glow_surf = None
+        # 発光用Surfaceは低解像度で持つ（座標を glow_scale 倍して描く）。理由は定数の定義部を参照
+        glow_scale = 1.0 / TUNNEL_LIGHT_GLOW_SURF_DOWNSCALE
         if tunnel_ranges:
-            if self._tunnel_glow_surf is None or self._tunnel_glow_size != (screen_width, screen_height):
-                self._tunnel_glow_surf = pygame.Surface((screen_width, screen_height))
-                self._tunnel_glow_size = (screen_width, screen_height)
+            glow_size = (max(1, screen_width // TUNNEL_LIGHT_GLOW_SURF_DOWNSCALE),
+                         max(1, screen_height // TUNNEL_LIGHT_GLOW_SURF_DOWNSCALE))
+            if self._tunnel_glow_surf is None or self._tunnel_glow_size != glow_size:
+                self._tunnel_glow_surf = pygame.Surface(glow_size)
+                self._tunnel_glow_size = glow_size
             tunnel_glow_surf = self._tunnel_glow_surf
             tunnel_glow_surf.fill((0, 0, 0))
 
@@ -998,6 +1006,18 @@ class Track:
                      pygame.draw.polygon(screen, arch_color, [
                          near_pts[k], near_pts[k + 1], far_pts[k + 1], far_pts[k]])
 
+                 # 発光用Surfaceにもアーチと同じ領域を黒で描き、このアーチ面より奥のライトの
+                 # にじみを消す（黒＝発光なし）。にじみはループ後に一括加算するため、
+                 # 画面へ描いたアーチでは隠れない。これがないとカーブで内側の壁の
+                 # 向こうにあるライトのにじみが壁を透過し、坑内が透けて見える。
+                 # このセグメント自身のライトはこの後に描くので消されない。
+                 # ファセット単位ではなく帯全体を1ポリゴンで描く：低解像度の消し込みでは
+                 # 塗り面積ではなく呼び出し回数がコストを支配するため（13-4の画面描画とは逆）。
+                 if tunnel_glow_surf is not None:
+                     pygame.draw.polygon(tunnel_glow_surf, (0, 0, 0),
+                                         [(px * glow_scale, py * glow_scale) for px, py in near_pts]
+                                         + [(px * glow_scale, py * glow_scale) for px, py in reversed(far_pts)])
+
                  # 天井ライト: 頂点(theta=pi/2)から左右に離した2灯を、弧の分割とは独立した角度で重ね描き
                  light_on = (seg['index'] % TUNNEL_LIGHT_SPACING) < TUNNEL_LIGHT_ON_LENGTH
                  if light_on:
@@ -1015,7 +1035,8 @@ class Track:
 
                          # にじみは本体の形をぼかして作るので、発光用Surfaceへ描くのも本体と同じ形でよい
                          if tunnel_glow_surf is not None:
-                             pygame.draw.polygon(tunnel_glow_surf, glow_color, quad)
+                             pygame.draw.polygon(tunnel_glow_surf, glow_color,
+                                                 [(px * glow_scale, py * glow_scale) for px, py in quad])
 
                  # 入口セグメントにだけ、坑口の小口面（＝厚み）を描く。入口面上に外枠アーチ
                  # （半径 +THICKNESS）と内枠アーチ（＝坑内の弧と同じ半径）の二重ポリゴンを取り、
@@ -1070,6 +1091,19 @@ class Track:
                              tunnel_arc_pt(t1, x1, y1, s1, out_hw, out_h),
                              tunnel_arc_pt(t1, x1, y1, s1),
                              tunnel_arc_pt(t0, x1, y1, s1)])
+
+                     # 奥のライトのにじみを山・小口リングで遮る。にじみは発光用Surfaceへ
+                     # 描きためてループ後に一括加算するため、画面へ描いた山では隠れない。
+                     # 山と同じ形（切り欠きだけ坑内の弧＝開口部の内側）を黒で塗り、
+                     # ここまでに描きためた奥のライトの発光を消す（黒＝発光なし）。
+                     # これがないと、トンネルがカーブしてライトが開口部の外へ投影された
+                     # とき、にじみが山を透過して坑内が透けたように見える。
+                     if tunnel_glow_surf is not None:
+                         inner_arc_pts = [tunnel_arc_pt(math.pi * k / arc_n, x1, y1, s1)
+                                          for k in range(arc_n + 1)]
+                         pygame.draw.polygon(tunnel_glow_surf, (0, 0, 0),
+                                             [(px * glow_scale, py * glow_scale)
+                                              for px, py in ridge_pts + inner_arc_pts])
 
              # Goal Line
              if seg['p1']['z'] <= GOAL_DISTANCE < seg['p2']['z']:
