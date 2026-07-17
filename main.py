@@ -633,8 +633,10 @@ def main():
             pygame.draw.rect(screen, bg_sky, (0, 0, SCREEN_WIDTH, HORIZON_Y))
             pygame.draw.rect(screen, bg_ground, (0, HORIZON_Y, SCREEN_WIDTH, SCREEN_HEIGHT - HORIZON_Y))
 
-            # カーブ累積値を背景に反映（地面テクスチャの消失点をカーブに連動させる）
-            bg_manager.set_curve_offset(track.get_accumulated_curve(car.z))
+            # 地面テクスチャの流れの消失点を道路に係留する
+            # （帯の最上段を道路が貫く画面位置に合わせ、道路の左右で扇状に流れるようにする）
+            ground_top_z = bg_manager.get_ground_top_depth()
+            bg_manager.set_road_anchor(track.get_road_screen_offset(car.z, car.x, ground_top_z))
 
             bg_manager.draw(screen, pitch_offset=pitch_offset, player_z=car.z)
 

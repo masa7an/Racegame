@@ -378,20 +378,38 @@ class Track:
             return self.segments[idx]['curve']
         return 0.0
 
-    def get_accumulated_curve(self, player_z):
-        """描画距離内に見えているセグメントの曲率の総和を返す（背景の消失点オフセット用）。
+    def get_road_screen_offset(self, player_z, player_x, depth_z):
+        """player_z から depth_z だけ先の道路中心が、画面中央から何px横にずれるかを返す。
 
-        draw() の描画ループが積む dx と同じ値。背景は道路より先に描くため、描画とは
-        独立に求められるようにしてある（draw() の戻り値を使うと背景が1フレーム遅れる）。
+        draw() の x_turn 積算・投影とまったく同じ式（背景は道路より先に描くため、描画とは
+        独立に求められるようにしてある）。地面テクスチャの流れの消失点を道路に係留する
+        のに使う。player_x を引くのでハンドル操作による道路の画面シフトにも追従する。
+
+        セグメント境界での飛びを防ぐため、depth_z を挟む2点間で x_turn を線形補間する。
         """
-        if not self.segments:
+        if not self.segments or depth_z <= 0:
             return 0.0
         start_idx = int(player_z / STRIPE_LENGTH)
         if start_idx >= len(self.segments):
             start_idx = len(self.segments) - 1
-        num_visible = int(DRAW_DISTANCE / STRIPE_LENGTH)
-        max_idx = min(len(self.segments) - 1, start_idx + num_visible)
-        return sum(self.segments[i]['curve'] for i in range(start_idx, max_idx + 1))
+
+        # depth_z 先が draw() の render_points の何番目にあたるか（小数で保持）
+        kf = (player_z + depth_z) / STRIPE_LENGTH - start_idx
+        n = int(kf)
+        frac = kf - n
+
+        # draw() のループと同じ積算。末尾を越えたら dx は増やさず x_turn だけ伸ばす
+        dx = 0.0
+        x_turn = 0.0
+        prev_x_turn = 0.0
+        for i in range(start_idx + 1, start_idx + n + 2):
+            prev_x_turn = x_turn
+            if i - 1 < len(self.segments):
+                dx += self.segments[i - 1]['curve']
+            x_turn += dx
+
+        x_at = prev_x_turn + (x_turn - prev_x_turn) * frac
+        return (x_at - player_x) * (PROJECTION_PLANE_DIST / depth_z)
 
     def get_height_at(self, z):
         idx = int(z / STRIPE_LENGTH)

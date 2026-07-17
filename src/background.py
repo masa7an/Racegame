@@ -1,8 +1,31 @@
 import pygame
-from .track import STAGE_CONFIG, HORIZON_Y, DRAW_DISTANCE
+from .track import (STAGE_CONFIG, HORIZON_Y, DRAW_DISTANCE,
+                    PROJECTION_PLANE_DIST, CAMERA_HEIGHT)
 
 # --- Ground Layer Config ---
 GROUND_RENDER_OFFSET_Y = 17 # Adjusts the Y start position of the ground layer relative to HORIZON_Y
+
+# 地面テクスチャの遠近の強さ。ストリップの横倍率 scale(dy) = 1 + GROUND_PERSPECTIVE_K * dy。
+#
+# これは「見た目の強さ」だけの係数ではなく、地面の流れの消失点(FOE)の高さを決めている。
+# テクスチャ列U（テクスチャ中心からのオフセット）の画面x座標は
+#     X(U, dy) = center_x + (1 + K*dy)*U + shift(dy)
+# なので流線の傾きは dX/d(dy) = K*U + shift'(dy) となり、U の一次式。よって全ての流線は
+# scale(dy) が 0 になる dy = -1/K で一点に収束する。K=0.01 なら帯の開始位置の100px上。
+#
+# 幾何学的に正しくは、この収束点は地平線になければならない。帯は地平線の
+# GROUND_RENDER_OFFSET_Y px 下から始まるので、本来は K = 1/GROUND_RENDER_OFFSET_Y
+# （＝1/17≒0.059）が要る。現在の 0.01 は「帯が地平線の100px下から始まる」前提の値で、
+# 実際の開始位置(17px下)と食い違っている。このため地面の遠近は幾何学的に必要な強さの
+# 約1/4.6しかなく（最下段の倍率が3.8倍、本来は17.6倍）、道路とは流れの角度が合わない。
+#
+# K と GROUND_RENDER_OFFSET_Y は独立に選べず、K = 1/GROUND_RENDER_OFFSET_Y を満たす必要が
+# ある。そのとき最下段の倍率は (SCREEN_HEIGHT - HORIZON_Y) / GROUND_RENDER_OFFSET_Y になり、
+# 「帯が画面のどこから始まるか」と「テクスチャがどれだけ拡大＝ボケるか」は一本のトレード
+# オフになる（17px下から→17.6倍、100px下から→3倍）。現状はこれを崩して両取りしている。
+# 値の変更は帯の開始位置とステージ毎の bg_offset_y・グラデーション高さの再調整を伴うため、
+# ここでは既存の見た目を維持して 0.01 のままにしてある。
+GROUND_PERSPECTIVE_K = 0.01
 
 # --- Gradient Smoothing Config ---
 GRADIENT_HEIGHT = 20  # グラデーション帯の高さ（上段、50%縮小）
@@ -92,9 +115,9 @@ class BackgroundLayer:
         screen.set_clip(None)
 
 class GroundLayer:
-    # 横方向は自前の状態を持たない。消失点シフトは draw() の vp_x_offset（＝道路の
-    # カーブ累積値）だけで決まる。BackgroundLayer のような時間積分ではないため、
-    # 直線では必ず中央へ戻り、道路の曲がりと一致する。
+    # 横方向は自前の状態を持たない。消失点シフトは draw() の road_x_offset（＝道路が
+    # 帯の最上段を貫く画面位置）だけで決まる。BackgroundLayer のような時間積分では
+    # ないため、直線では必ず中央へ戻り、道路の曲がりと一致する。
     def __init__(self, image_path, factor_y_speed, screen_width, screen_height):
         # Load source and crop bottom section
         src_img = pygame.image.load(image_path).convert()
@@ -136,38 +159,38 @@ class GroundLayer:
         # So scroll_y should decrease.
         self.scroll_y -= player_speed * self.factor_y_speed * dt
 
-    def draw(self, screen, pitch_offset_y=0, vp_x_offset=0.0):
+    def draw(self, screen, pitch_offset_y=0, road_x_offset=0.0):
         # Raster Effect Loop for Perspective (Pseudo-3D)
-        
+
         # Apply pitch to start_y
         # pitch_offset_y is passed from BackgroundManager
         # Positive pitch -> Horizon moves down -> start_y moves down
         current_start_y = self.start_y + int(pitch_offset_y)
 
-        
-        # Perspective Factor (k)
-        # User requested "10x" stronger feel. 
-        # k = 0.001 -> Adds 100% width over 1000px.
-        # k = 0.01 -> Adds 100% width over 100px.
-        # Screen height part to cover is approx 350px.
-        # With k=0.01, at bottom (dy=350), scale = 1.0 + 3.5 = 4.5x. This is strong.
-        k = 0.01 
-        
+        k = GROUND_PERSPECTIVE_K
+
         strip_height = 2 # Performance vs Quality tradeoff. 2px is decent.
-        
+
         # Loop from top of ground (current_start_y) to bottom of screen
         target_height = self.screen_height - current_start_y
         if target_height <= 0: return
 
-        # 定数（track.pyと整合）
-        PROJECTION_PLANE_DIST = 300.0
-        CAMERA_HEIGHT = 1500.0
-
         # To optimize, we can lock surfaces, but Pygame handles this mostly.
         # We need to center the scaled strip.
-        
+
         center_x = self.screen_width // 2
-        
+
+        # 流れの消失点(FOE)を道路に係留する。
+        # 全流線は dy=-1/k で一点に収束し（GROUND_PERSPECTIVE_K の説明を参照）、その画面xは
+        #     FOE_x = center_x + vp * (1 + 1/(k*H))        … H = target_height
+        # になる。これを「道路が帯の最上段を貫く位置」center_x + road_x_offset に一致させる:
+        #     road_x_offset = vp * (1 + 1/(k*H))  →  vp = road_x_offset * kH/(kH+1)
+        # こうするとFOEが道路の上に乗るので、道路の左の地面は左下へ、右の地面は真下〜右下へと
+        # 道路から離れる向きに扇状に流れる。道路へ横から滑り込む帯ができない。
+        # H はピッチで変わるため、ここ（描画時）で計算する必要がある。
+        kH = k * target_height
+        vp = road_x_offset * kH / (kH + 1.0)
+
         # 累積的アプローチ：スクロール開始位置から累積的にサンプリング
         # scroll_y をモジュロで正規化した位置から開始
         base_src_y = self.scroll_y % self.height  # 開始位置（負対応）
@@ -180,13 +203,12 @@ class GroundLayer:
             
             # 2. 消失点シフト計算（カーブ対応）
             # 上（dy=0）ほど強く、下（dy=target_height）ほど弱い
-            shift = vp_x_offset * (1.0 - dy / target_height)
-            
+            shift = vp * (1.0 - dy / target_height)
+
             # 3. Source Strip Y - 累積的アプローチ（ジャンプ防止）
             # 奥行きに応じたサンプリング増分を計算
             # dyが小さい（遠方）→ zが大きい → 増分小（テクスチャ密に読む）
             # dyが大きい（手前）→ zが小さい → 増分大（テクスチャまばらに読む）
-            z = PROJECTION_PLANE_DIST * CAMERA_HEIGHT / max(1, dy + 1)
             # 増分係数：手前ほど大きく増分（テクスチャをスキップ）
             # 基準はdy=target_height/2のラインで1.0
             increment_factor = (target_height / 2) / max(1, dy + 1)
@@ -253,14 +275,31 @@ class BackgroundManager:
         self.screen_width = screen_width
         self.screen_height = screen_height
         self.ground_offset = GROUND_RENDER_OFFSET_Y
-        self.curve_offset = 0.0  # カーブに連動する消失点オフセット
+        self.road_x_offset = 0.0  # 帯の最上段を道路が貫く画面x（中央からのオフセット）
         self.camera_y_offset = 0.0  # 道路カメラ高さに連動するオフセット（消失点同期用）
     
-    def set_curve_offset(self, curve_accumulated):
-        """カーブ累積値から地面の消失点オフセットを設定"""
-        # 道路より控えめに動かす（0.3は調整可能）
-        self.curve_offset = curve_accumulated * 0.3
-    
+    def get_ground_top_depth(self):
+        """地面テクスチャの帯の最上段が対応する奥行き z を返す（係留用）。
+
+        帯の最上段は画面 y = HORIZON_Y + ground_offset。道路の投影式
+            screen_y = HORIZON_Y + CAMERA_HEIGHT * (PROJECTION_PLANE_DIST / z)
+        を z について解いた値。ground_offset はデバッグキーで実行中に変わるため、
+        定数ではなくメソッドで都度求める。
+        """
+        if self.ground_offset <= 0:
+            return DRAW_DISTANCE
+        return PROJECTION_PLANE_DIST * CAMERA_HEIGHT / self.ground_offset
+
+    def set_road_anchor(self, road_screen_offset):
+        """地面テクスチャの流れの消失点を係留する道路の画面位置を設定する。
+
+        road_screen_offset は「帯の最上段(get_ground_top_depth()の奥行き)における
+        道路中心が、画面中央から何px横にずれているか」。実際の消失点シフト量への
+        変換は GroundLayer.draw が行う（ピッチで帯の高さが変わるため）。
+        """
+        self.road_x_offset = road_screen_offset
+
+
     def set_camera_y_offset(self, camera_y):
         """道路のカメラ高さからオフセットを計算（消失点同期用）
         
@@ -353,7 +392,7 @@ class BackgroundManager:
             layer.update(dt, curve_value, player_speed)
         
         if self.ground_layer:
-            # 地面は縦スクロールのみ状態を持つ（横は set_curve_offset 経由で描画時に決まる）
+            # 地面は縦スクロールのみ状態を持つ（横は set_road_anchor 経由で描画時に決まる）
             self.ground_layer.update(dt, player_speed)
     
     def _interpolate_color(self, c1, c2, t):
@@ -602,7 +641,7 @@ class BackgroundManager:
         self._draw_gradient_band(screen, combined_offset)
         
         if self.ground_layer:
-            self.ground_layer.draw(screen, combined_offset, self.curve_offset)
+            self.ground_layer.draw(screen, combined_offset, self.road_x_offset)
 
         
         # 下段グラデーションを描画（GroundLayerの後）
