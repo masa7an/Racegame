@@ -48,12 +48,17 @@ TUNNEL_PORTAL_COLOR = (120, 118, 122)              # 小口面の色（外光に
 # 単純多角形で描ける（pygameは穴あきポリゴンを描けないので、この性質に頼っている）。
 MOUNTAIN_HALF_WIDTH = 40000.0     # 中心から裾までの距離（world units）。接近時に裾を画面へ入れない幅
 MOUNTAIN_HEIGHT = 16000.0         # 稜線の最大高さ（路面から。接近時に画面上部を覆う）
-MOUNTAIN_COLOR = (46, 74, 44)     # 山肌の色（背景の地面と馴染む暗めの緑、単色）
+MOUNTAIN_COLOR = (40, 92, 46)     # 山肌の色（背景の地面と馴染む暗めの緑、単色）
 MOUNTAIN_SEED = 6                 # 稜線の形を固定する乱数シード（毎フレーム同じ形）
 MOUNTAIN_DETAIL_LEVELS = 5        # 稜線の分割段数（midpoint displacement。2^N+1 点になる）
 MOUNTAIN_ROUGHNESS = 0.35         # 稜線が包絡線から凹んでよい最大割合（0=なめらかな釣鐘、1=激しくギザギザ）
 MOUNTAIN_AA_SUPERSAMPLE = 4       # 稜線のAA: 帯を縦何倍で描いて縮小するか（＝カバレッジの階調数。詳細は _blit_mountain_aa）
 MOUNTAIN_RIDGE_FEATHER_PX = 1.75  # 稜線を縦方向へにじませる幅（px）。1でほぼAAのみ、大きいほど空へ溶ける
+MOUNTAIN_FOREST_IMAGE = 'asset/forest.png'  # 山肌に貼る森テクスチャ（航空写真風、格子状に敷き詰める）
+MOUNTAIN_FOREST_TILE_WORLD_W = 4500.0  # タイル1枚分の世界幅（world units）。s1倍してスクリーン上のタイル寸法にする
+MOUNTAIN_FOREST_TILE_MIN_PX = 60       # タイルのスクリーン最小幅（px）。遠景でタイル数が爆発しないための下限
+MOUNTAIN_FOREST_ALPHA_MAX = 170        # 至近距離でのテクスチャ最大不透明度（0-255）。低めにして地肌とブレンドさせる
+MOUNTAIN_FOREST_ALPHA_GAMMA = 0.7      # (1-fog_pct)に掛ける指数。1未満だと遠距離の減衰が緩やかになり、より遠くまでうっすら見え続ける
 
 # Tunnel Ceiling Lights (天井ライト — 装飾のみ、路面への影響なし)
 # 左右2灯に分離。弧のファセット分割とは独立した角度で自由に配置・サイズ調整する。
@@ -160,6 +165,8 @@ class Track:
         self._tunnel_glow_size = (0, 0)
         self._glow_scratch = {}         # ブラーの縮小/拡大に使うSurfaceのキャッシュ
         self._mountain_ridge = Track._build_mountain_ridge()  # 坑口の山の稜線（世界座標、形は毎フレーム同じ）
+        self._mountain_forest_tex = pygame.image.load(MOUNTAIN_FOREST_IMAGE).convert_alpha()  # 山肌に敷き詰める森テクスチャ
+        self._alpha_scratch = {}        # 山肌テクスチャのマスク・タイル描画に使うSurfaceのキャッシュ
 
     @staticmethod
     def _build_mountain_ridge():
@@ -188,7 +195,6 @@ class Track:
             envelope = MOUNTAIN_HEIGHT * 0.5 * (1 - math.cos(2 * math.pi * t))
             ridge.append((x, envelope * (1.0 - MOUNTAIN_ROUGHNESS * v)))
         return ridge
-
 
     def project(self, world_x, world_y, world_z, road_offset, screen_width, screen_height):
         if world_z <= 0: return None
@@ -476,6 +482,78 @@ class Track:
         screen.blit(pygame.transform.smoothscale(blurred, (screen_width, h)), (0, y0))
         return True
 
+    def _get_alpha_scratch(self, key, size):
+        # 山肌ムラのマスク描画に使う中間Surface（per-pixel alpha）を使い回す
+        surf = self._alpha_scratch.get(key)
+        if surf is None or surf.get_size() != size:
+            surf = pygame.Surface(size, pygame.SRCALPHA)
+            self._alpha_scratch[key] = surf
+        return surf
+
+    def _blit_mountain_forest(self, screen, mountain_poly, fog_pct, screen_width, screen_height,
+                               anchor_x, anchor_y, scale):
+        """山肌に森テクスチャ（forest.png）を貼ってノイズ感の代わりの質感を出す。mountain_polyと
+        同じ輪郭でマスクするので、稜線やアーチの切り欠きをはみ出さない。
+
+        タイルの基準点はマスクの左上（＝mountain_polyのbbox角、接近するほど動く）ではなく、
+        坑口中心の投影点(anchor_x, anchor_y)に固定する。タイル1枚の世界幅
+        MOUNTAIN_FOREST_TILE_WORLD_Wにscale(=s1)を掛けてスクリーン寸法を出し、その中心を
+        anchor点に揃えてから上下左右へ敷き詰める。bbox角を基準にすると、接近でbboxが
+        広がるたびに基準点そのものが動いて模様が対角線状に流れて見える
+        （ヘリで斜めに上昇するような見え方）。坑口中心は接近してもスクリーン上でほぼ動かないので、
+        ここを基準にすれば模様は中心から均等に育つだけになり、その流れが起きない。
+
+        質感の濃さはfog_pctで絞る。ただし1次関数で絞ると近距離で不透明になりすぎ、
+        遠距離ではすぐ消えてしまうため、最大値をMOUNTAIN_FOREST_ALPHA_MAXで頭打ちにして
+        近距離でも地肌とブレンドさせつつ、指数MOUNTAIN_FOREST_ALPHA_GAMMA(<1)で
+        遠距離の減衰を緩め、もう少し先まで薄く見え続けるようにする。
+        """
+        xs = [p[0] for p in mountain_poly]
+        ys = [p[1] for p in mountain_poly]
+        x0 = max(0, int(min(xs)))
+        y0 = max(0, int(min(ys)))
+        x1 = min(screen_width, int(max(xs)) + 1)
+        y1 = min(screen_height, int(max(ys)) + 1)
+        w, h = x1 - x0, y1 - y0
+        if w <= 0 or h <= 0:
+            return
+
+        fog_pct_clamped = max(0.0, min(1.0, fog_pct))
+        overlay_alpha = int(MOUNTAIN_FOREST_ALPHA_MAX * (1.0 - fog_pct_clamped) ** MOUNTAIN_FOREST_ALPHA_GAMMA)
+        if overlay_alpha <= 2:
+            return
+
+        local_poly = [(px - x0, py - y0) for px, py in mountain_poly]
+        mask = self._get_alpha_scratch('mountain_forest', (w, h))
+        mask.fill((0, 0, 0, 0))
+        pygame.draw.polygon(mask, (255, 255, 255, 255), local_poly)
+
+        tex = self._mountain_forest_tex
+        # タイルの上限は画面幅まで（それより大きくしても、はみ出す分は敷き詰めループが
+        # 別タイルでまかなうので見た目は変わらない。坑口に接近するとscaleが急激に増えるため、
+        # 上限を設けないとsmoothscaleの対象が数千px四方まで膨らみ、そこだけ極端に重くなる）。
+        tile_w = max(MOUNTAIN_FOREST_TILE_MIN_PX,
+                     min(round(MOUNTAIN_FOREST_TILE_WORLD_W * scale), screen_width))
+        tile_h = max(1, round(tile_w * tex.get_height() / tex.get_width()))
+        tile = self._get_alpha_scratch('mountain_forest_tile', (tile_w, tile_h))
+        pygame.transform.smoothscale(tex, (tile_w, tile_h), tile)
+
+        # タイルの「中心」がanchor(=坑口中心の投影点)に来る位置を基準に、上下左右へ並べる
+        start_x = (anchor_x - x0) - tile_w / 2.0
+        start_y = (anchor_y - y0) - tile_h / 2.0
+        k_min = math.floor(-start_x / tile_w)
+        k_max = math.ceil((w - start_x) / tile_w)
+        m_min = math.floor(-start_y / tile_h)
+        m_max = math.ceil((h - start_y) / tile_h)
+        for m in range(int(m_min), int(m_max) + 1):
+            ty = round(start_y + m * tile_h)
+            for k in range(int(k_min), int(k_max) + 1):
+                tx = round(start_x + k * tile_w)
+                mask.blit(tile, (tx, ty), special_flags=pygame.BLEND_RGBA_MULT)
+
+        mask.set_alpha(overlay_alpha)
+        screen.blit(mask, (x0, y0))
+
     def _get_glow_scratch(self, key, size):
         # 縮小/拡大の中間Surfaceを使い回す（毎フレームの確保を避ける）
         surf = self._glow_scratch.get(key)
@@ -663,7 +741,12 @@ class Track:
              fog_pct = z_near / DRAW_DISTANCE
              # Increase density coverage (1.5x from previous 1.5 => 2.25)
              fog_pct = fog_pct * fog_pct * 2.25
-             
+             # 山の森テクスチャ専用のフォグ値（水平線ブースト前の値を退避）。
+             # 下の水平線ブーストは「道路が消失点に近いか」という画面上の見た目で決まるため、
+             # 坑口からまだ遠い時点でもすぐ1.0に張り付いてしまい、テクスチャが実際の距離より
+             # 早く消えてしまう（詳細は_blit_mountain_forest呼び出し側のコメント参照）。
+             mountain_forest_fog_pct = fog_pct
+
              # [TEST] 水平線近くの道路を背景に馴染ませる（非線形グラデーション）
              # Y座標に基づく追加フェード（最遠方で強くブレンド）
              # Hills can make horizon varied. 
@@ -970,6 +1053,13 @@ class Track:
                      # 稜線と空の境の階段を消す（詳細と、pygameのaalineが使えない理由は _blit_mountain_aa）
                      self._blit_mountain_aa(screen, mountain_poly, ridge_pts, mountain_color,
                                             screen_width, screen_height)
+
+                     # 山肌に森テクスチャを重ねて質感を出す（詳細は _blit_mountain_forest）。
+                     # ベースの塗り・AAは見た目の水平線ブースト込みのfog_pctのまま（既存の見た目を変えない）。
+                     # テクスチャだけは水平線ブースト抜きのmountain_forest_fog_pctを使い、
+                     # もっと手前からうっすら見え始めて、実際の距離なりに緩やかに消えるようにする。
+                     self._blit_mountain_forest(screen, mountain_poly, mountain_forest_fog_pct, screen_width, screen_height,
+                                                 x1, y1, s1)
 
                      for k in range(arc_n):
                          t0 = math.pi * k / arc_n
