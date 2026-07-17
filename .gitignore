@@ -4,10 +4,8 @@ __pycache__/
 *$py.class
 *.so
 
-# Assets は Git LFS で管理する（.gitattributes 参照）。
+# Assets は Git LFS で管理する（.gitattributes 参照）。除外しない。
 # 以前は asset/ 全体を除外していたため、クローンしただけではゲームが起動しなかった。
-# BGM(mp3)のみ、第三者素材(d-elf.com)で再配布の可否が未確認のため当面は除外する。
-asset/*.mp3
 
 # Logs
 logs/

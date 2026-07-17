@@ -33,13 +33,6 @@ pip install pygame
 
 If you cloned without Git LFS installed, run `git lfs pull` to fetch the assets.
 
-### BGM (optional)
-
-The background music is a third-party track and is **not included** in this repository.
-The game runs fine without it (silently). To enable it, download
-[Experimental Model by d-elf.com](https://www.d-elf.com/archives/4196.html)
-and save it as `asset/Experimental_Model_long.mp3`.
-
 ## How to Run
 
 ```bash
@@ -63,11 +56,10 @@ Or double-click `run.bat` on Windows.
 ## Credits
 
 ### Development
-This game was created almost entirely by a non-engineer using **Antigravity** and **Gemini** AI tools (except for the BGM).
+This game was created almost entirely by a non-engineer using **Antigravity** and **Gemini** AI tools.
 
 ### BGM
-Music by d-elf.com (Experimental Model)  
-https://www.d-elf.com/archives/4196.html
+"Turbo Apex" — created by the author with [Suno](https://suno.com/).
 
 ## License
 

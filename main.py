@@ -120,12 +120,11 @@ def main():
     master_volume = load_settings()
 
     # --- BGM Setup ---
-    # BGM(asset/*.mp3)は第三者素材のためリポジトリに含まれない（.gitignore 参照）。
-    # クローンしただけの環境では読み込みに失敗するので、以降の再生は bgm_loaded で守る。
+    # 読み込みに失敗しても無音で続行する。以降の再生は bgm_loaded で守ること。
     # music.play() は未ロードだと pygame.error を投げる（fadeout/set_volume は投げない）。
     bgm_loaded = False
     try:
-        bgm_file = "asset/Experimental_Model_long.mp3"
+        bgm_file = "asset/turbo_apex.mp3"
         pygame.mixer.music.load(bgm_file)
         pygame.mixer.music.set_volume(BGM_BASE_VOLUME * master_volume)
         pygame.mixer.music.play(-1)
