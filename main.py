@@ -1,9 +1,8 @@
-# v1.1
-# 2026-07-17
 import pygame
 import sys
 import os
 from src.logger import log_info, log_phase, reset_logs
+from src.version import VERSION
 
 # Modules
 from src.car import Car
@@ -113,7 +112,7 @@ def main():
     pygame.init()
     pygame.mixer.init(frequency=44100, size=-16, channels=2)
     screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
-    pygame.display.set_caption("Race Game v1.1")
+    pygame.display.set_caption(f"Race Game v{VERSION}")
     clock = pygame.time.Clock()
     font = pygame.font.Font(None, HUD_FONT_SIZE)
 
@@ -121,11 +120,16 @@ def main():
     master_volume = load_settings()
 
     # --- BGM Setup ---
+    # BGM(asset/*.mp3)は第三者素材のためリポジトリに含まれない（.gitignore 参照）。
+    # クローンしただけの環境では読み込みに失敗するので、以降の再生は bgm_loaded で守る。
+    # music.play() は未ロードだと pygame.error を投げる（fadeout/set_volume は投げない）。
+    bgm_loaded = False
     try:
         bgm_file = "asset/Experimental_Model_long.mp3"
         pygame.mixer.music.load(bgm_file)
         pygame.mixer.music.set_volume(BGM_BASE_VOLUME * master_volume)
         pygame.mixer.music.play(-1)
+        bgm_loaded = True
         print(f"Playing BGM: {bgm_file}")
     except Exception as e:
         print(f"BGM Error: {e}")
@@ -504,7 +508,8 @@ def main():
                      smoothed_slope = 0.0
                      current_state = STATE_NEXT_STAGE_INIT
                      # Restart BGM and engine sound
-                     pygame.mixer.music.play(-1)
+                     if bgm_loaded:
+                         pygame.mixer.music.play(-1)
                      sound_manager.update(0, False)  # Reset engine sound
                      continue # Skip rendering this frame (avoid stage_id=0 crash)
                      

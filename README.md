@@ -20,12 +20,25 @@ A retro-style pseudo-3D racing game built with Python and Pygame.
 
 - Python 3.8+
 - Pygame 2.x
+- [Git LFS](https://git-lfs.com/) — image and sound assets in `asset/` are stored with LFS
 
 ## Installation
 
 ```bash
+git lfs install        # once per machine, before cloning
+git clone https://github.com/masa7an/Racegame.git
+cd Racegame
 pip install pygame
 ```
+
+If you cloned without Git LFS installed, run `git lfs pull` to fetch the assets.
+
+### BGM (optional)
+
+The background music is a third-party track and is **not included** in this repository.
+The game runs fine without it (silently). To enable it, download
+[Experimental Model by d-elf.com](https://www.d-elf.com/archives/4196.html)
+and save it as `asset/Experimental_Model_long.mp3`.
 
 ## How to Run
 
