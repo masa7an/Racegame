@@ -128,7 +128,7 @@ GOAL_DISTANCE = 600000.0
 STAGE_CONFIG = {
     1: { 
         'sky_color': (100, 149, 237), 'grass_color': (34, 139, 34),
-        'road_light': (105, 105, 105), 'road_dark': (95, 95, 95),
+        'road_light': (101, 101, 101), 'road_dark': (99, 99, 99),
         'bg_image': 'asset/bg1.png', 'ground_image': 'asset/bg1v.png', 'bg_offset_y': -140,
         'curve_freq': 0.05, 'curve_amp': 30.0,
         'curve_mult': 0.8,
@@ -137,7 +137,7 @@ STAGE_CONFIG = {
     },
     2: { 
         'sky_color': (255, 140, 0), 'grass_color': (210, 180, 140),
-        'road_light': (110, 110, 110), 'road_dark': (100, 100, 100),
+        'road_light': (106, 106, 106), 'road_dark': (104, 104, 104),
         'bg_image': 'asset/bg2.png', 'ground_image': 'asset/bg2v.png', 'bg_offset_y': -135,
         'curve_freq': 0.08, 'curve_amp': 60.0,
         'curve_mult': 1.0,
@@ -146,7 +146,7 @@ STAGE_CONFIG = {
     },
     3: { 
         'sky_color': (20, 40, 110), 'grass_color': (20, 20, 20),
-        'road_light': (120, 120, 130), 'road_dark': (110, 110, 120),
+        'road_light': (116, 116, 126), 'road_dark': (114, 114, 124),
         'bg_image': 'asset/bg3.png', 'ground_image': 'asset/bg3v.png', 'bg_offset_y': -169,
         'curve_freq': 0.1, 'curve_amp': 90.0,
         'curve_mult': 1.2,
@@ -155,7 +155,7 @@ STAGE_CONFIG = {
     },
     4: { 
         'sky_color': (200, 240, 255), 'grass_color': (139, 69, 19),
-        'road_light': (130, 130, 130), 'road_dark': (120, 120, 120),
+        'road_light': (126, 126, 126), 'road_dark': (124, 124, 124),
         'bg_image': 'asset/bg4.png', 'ground_image': 'asset/bg4v.png', 'bg_offset_y': -175, 
         'fog_color': (190, 160, 130),  # 明るい砂漠色（背景に馴染む）
         'curve_freq': 0.04, 'curve_amp': 50.0,
@@ -170,7 +170,7 @@ STAGE_CONFIG = {
     },
     5: { 
         'sky_color': (100, 149, 237), 'grass_color': (34, 139, 34),
-        'road_light': (105, 105, 105), 'road_dark': (95, 95, 95),
+        'road_light': (101, 101, 101), 'road_dark': (99, 99, 99),
         'bg_image': 'asset/bg5.png', 'ground_image': 'asset/bg5v.png', 'bg_offset_y': -135,
         'curve_freq': 0.12, 'curve_amp': 80.0,
         'curve_mult': 1.8,
@@ -186,7 +186,7 @@ STAGE_CONFIG = {
         # Stage1の環境・コース特性を複製（トンネルギミック用ステージ）
         # stage_idが乱数シードのため、実際のコースレイアウトはStage1とは別物になる
         'sky_color': (100, 149, 237), 'grass_color': (34, 139, 34),
-        'road_light': (105, 105, 105), 'road_dark': (95, 95, 95),
+        'road_light': (101, 101, 101), 'road_dark': (99, 99, 99),
         'bg_image': 'asset/bg1.png', 'ground_image': 'asset/bg1v.png', 'bg_offset_y': -140,
         'curve_freq': 0.05, 'curve_amp': 30.0,
         'curve_mult': 0.8,
