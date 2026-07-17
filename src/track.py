@@ -398,8 +398,12 @@ class Track:
         n = int(kf)
         frac = kf - n
 
-        # draw() のループと同じ積算。末尾を越えたら dx は増やさず x_turn だけ伸ばす
-        dx = 0.0
+        # draw() のループと同じ積算。末尾を越えたら dx は増やさず x_turn だけ伸ばす。
+        # dx の初期値も draw() と揃える（理由は draw() 側のコメント）。ここの depth_z 方向の
+        # 線形補間はセグメント間の飛びを消すが、player_z が境界を跨ぐ際の積算原点の飛びは
+        # 別物で、そちらはこの初期値でしか消せない。
+        base_percent = (player_z - start_idx * STRIPE_LENGTH) / STRIPE_LENGTH
+        dx = -(self.segments[start_idx]['curve'] * base_percent)
         x_turn = 0.0
         prev_x_turn = 0.0
         for i in range(start_idx + 1, start_idx + n + 2):
@@ -673,10 +677,23 @@ class Track:
         max_idx = min(len(self.segments) - 1, start_idx + num_visible)
         
         # Curve Accumulation
+        # x_turn はカメラ基準の相対量（カメラ位置で0・進行方向は道路の接線）で積算する。
+        # 積算の原点は start_idx の境界ではなく player_z そのものでなければならない。
+        # dx を素の0から始めると、原点が「player_z が今いるセグメントの手前の境界」に
+        # ずれ、start_idx のカーブが既に通過済みの区間にまで効いてしまう。その原点は
+        # player_z が STRIPE_LENGTH の倍数を跨ぐ瞬間に1セグメントぶん飛ぶので、x_turn が
+        # (i-start_idx)*curve[start_idx] だけ不連続に動く。ずれるのは遠方だけではなく
+        # 道路全体で、むしろ手前ほど大きい（stage5のカーブ中盤で y=317 が6.3px、
+        # 画面下端が7.5px）。最高速では約1.85フレームごとに跨ぐため、定常カーブを
+        # 定速で走る間ずっと道路全体が毎フレーム3〜4px横に震える。
+        # セグメントの消化済み割合ぶんだけ dx を戻しておくと原点が player_z に一致し、
+        # x_turn は player_z に対して連続になる（同条件で毎フレーム0.3px以下＝実際の動きのみ）。
+        # カメラ位置(i=start_idx)の x_turn は0のままなので、car.x の意味は変わらない。
+        base_percent = (player_z - start_idx * STRIPE_LENGTH) / STRIPE_LENGTH
         render_points = []
-        dx = 0.0
+        dx = -(self.segments[start_idx]['curve'] * base_percent)
         x_turn = 0.0
-        
+
         for i in range(start_idx, max_idx + 2):
             if i > start_idx:
                 if i-1 < len(self.segments):
@@ -709,7 +726,14 @@ class Track:
                 
             render_points[-1]['y_world'] = actual_y
 
-            
+        # 回帰ガード: カメラ位置(i=start_idx)の x_turn は常に0でなければならない。
+        # ここが0以外になると car.x（道路中心からの横オフセット）の基準系ごとずれ、
+        # オフロード判定・トンネル壁と見た目が食い違う。dx のシード（上記）は最初の
+        # x_turn += dx より前にしか効かないので構造上0になるが、積算の変更で壊しやすい
+        # ため明示的に確認する（tests/test_track_continuity.py が毎回ここを通る）。
+        assert not render_points or render_points[0]['x_rel'] == 0.0, \
+            "x_turn origin is off the camera position; car.x frame would break"
+
         # トンネル天井ライトの発光用Surface（ライト本体だけを描き、後段でブラーをかけて加算合成する）
         # 黒でクリアするのは、加算合成では黒＝発光なしとして扱われるため（縮小時に黒と混ざって減衰する）
         # 弧の分割数はフレームに1つだけ決め、全トンネルセグメントで共有する（_arc_segments_for参照:
