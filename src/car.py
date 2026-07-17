@@ -10,8 +10,9 @@ ACCEL_RATE = 0.525
 DECEL_RATE = 1.25
 GRAVITY_FACTOR = 0.8  # 勾配による重力加速度係数 (0.6 -> 0.8: +20% adjustment)
 BRAKE_RATE = 1.2  # ブレーキ減速率 (1.0 -> 1.2: +20% improvement)
-STEER_SENSITIVITY_LOW = 12.0  
-STEER_SENSITIVITY_HIGH = 5.0  
+STEER_SENSITIVITY_LOW = 16.0  # 2026-07-17: 30km/h以下の低速域で曲がりきれない問題を受けて12.0から引き上げ
+STEER_SENSITIVITY_HIGH = 5.0
+STEER_LOW_SPEED_PLATEAU = 29.1  # 2026-07-17: 60km/h相当。この速度まではSTEER_SENSITIVITY_LOWを維持
 
 PLAYER_WIDTH = 60
 PLAYER_HEIGHT = 40
@@ -73,8 +74,15 @@ class Car:
         # 1. Steering
         speed_ratio = self.speed / NORMAL_MAX_SPEED # Use base for steering sensitivity to keep feel consistent
         speed_ratio = max(0.0, min(1.0, speed_ratio))
-        
-        current_turn_speed = STEER_SENSITIVITY_LOW + (STEER_SENSITIVITY_HIGH - STEER_SENSITIVITY_LOW) * speed_ratio
+
+        # 60km/h(STEER_LOW_SPEED_PLATEAU)まではSTEER_SENSITIVITY_LOWを維持し、
+        # それ以降でSTEER_SENSITIVITY_HIGHまで線形に落とす（低中速域の曲がりやすさ向上）
+        if self.speed <= STEER_LOW_SPEED_PLATEAU:
+            current_turn_speed = STEER_SENSITIVITY_LOW
+        else:
+            steer_ratio = (self.speed - STEER_LOW_SPEED_PLATEAU) / (NORMAL_MAX_SPEED - STEER_LOW_SPEED_PLATEAU)
+            steer_ratio = min(1.0, steer_ratio)
+            current_turn_speed = STEER_SENSITIVITY_LOW + (STEER_SENSITIVITY_HIGH - STEER_SENSITIVITY_LOW) * steer_ratio
         
         # [NEW] Wet Road Steering Reduction (Stage 5)
         # Wet surface reduces tire grip, making steering less responsive (Understeer)
