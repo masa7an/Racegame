@@ -1,4 +1,4 @@
-## Stage 6 - Tunnel Gimmick (2026/07/17)
+## v1.1 - Stage 6 Tunnel Gimmick (2026/07/17)
 
 Stage1の環境・コース特性を複製したコースに、固定位置・固定長のトンネル区間を3回配置。
 ステージ諸元は `docs/stage.md`、実装の詳細ログは `docs/tunnel_requirements.md` を参照。
