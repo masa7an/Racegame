@@ -624,31 +624,18 @@ def main():
             if render_stage_id > 6: render_stage_id = 6
             
             # 1. Background
-            # 1. Background
-            # Use calculated pitch_val from Update loop? 
-            # Or recalculate. Update logic is above.
-            # Calculating here again for safety or storing in variable?
-            # Let's use the one from Update.
-            current_slope = track.get_slope_at(car.z)
-            
             # [TUNING] Pitch Offset
             # フィルタ済みの勾配を使用（道路のカメラ高さと同期）
-            pitch_offset = -smoothed_slope * 300.0 
-            
-            bg_manager.draw(screen, pitch_offset=pitch_offset, player_z=car.z)
+            pitch_offset = -smoothed_slope * 300.0
 
-
-
-            # 2. Track
-            # Safer background fill
+            # Safer background fill（背景レイヤーの下地。BGより先に塗る）
             bg_sky, bg_ground = track.get_bg_colors(render_stage_id)
             pygame.draw.rect(screen, bg_sky, (0, 0, SCREEN_WIDTH, HORIZON_Y))
             pygame.draw.rect(screen, bg_ground, (0, HORIZON_Y, SCREEN_WIDTH, SCREEN_HEIGHT - HORIZON_Y))
 
-            # Re-draw BG over fill (BG manager handles transparency naturally)
             bg_manager.draw(screen, pitch_offset=pitch_offset, player_z=car.z)
 
-            
+            # 2. Track
             current_fog_color = bg_manager.get_fog_color(render_stage_id)
             accumulated_curve = track.draw(screen, car.z, car.x, SCREEN_WIDTH, SCREEN_HEIGHT, render_stage_id, current_fog_color, smoothed_camera_y)
             
