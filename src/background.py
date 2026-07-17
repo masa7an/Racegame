@@ -1,31 +1,39 @@
+import math
+
 import pygame
 from .track import (STAGE_CONFIG, HORIZON_Y, DRAW_DISTANCE,
                     PROJECTION_PLANE_DIST, CAMERA_HEIGHT)
 
 # --- Ground Layer Config ---
-GROUND_RENDER_OFFSET_Y = 17 # Adjusts the Y start position of the ground layer relative to HORIZON_Y
+#
+# 地面テクスチャの帯を地平線の何px下から描き始めるか。＝帯のカバー範囲。
+#
+# 17 なのは見た目の要求から: これより下げると、地平線〜帯の上端の隙間に背景画像が覗き、
+# そこを通る道路の遠方が地面から浮いて見える（かつスクロールテクスチャと背景画像の色が
+# 馴染まず、切れ目が露見する）。地平線ぎりぎりまで地面で埋めることでこの継ぎ目を隠している。
+#
+# 帯の行を dy（帯の上端からの距離）とすると、その行が映すワールド奥行きは
+#     z(dy) = CAMERA_HEIGHT * PROJECTION_PLANE_DIST / (OFFSET + dy)
+# で決まる。OFFSET=17 は上端が z=26471、最下段が z=1500 で、22000単位ぶんの奥行きを
+# たった83px(y=317〜400)に詰め込む。この圧縮は物理的に避けられず、素直にサンプリング
+# すれば必ず折り返す。GroundLayer は縦ミップマップでこれを面積平均して吸収している
+# （上端はテクスチャの平均色に収束し、地平線の霞へ自然に溶ける）。
+GROUND_RENDER_OFFSET_Y = 17
 
-# 地面テクスチャの遠近の強さ。ストリップの横倍率 scale(dy) = 1 + GROUND_PERSPECTIVE_K * dy。
+# 地面テクスチャの幅が、ワールド上で何単位ぶんに相当するか。＝模様の細かさのツマミ。
 #
-# これは「見た目の強さ」だけの係数ではなく、地面の流れの消失点(FOE)の高さを決めている。
-# テクスチャ列U（テクスチャ中心からのオフセット）の画面x座標は
-#     X(U, dy) = center_x + (1 + K*dy)*U + shift(dy)
-# なので流線の傾きは dX/d(dy) = K*U + shift'(dy) となり、U の一次式。よって全ての流線は
-# scale(dy) が 0 になる dy = -1/K で一点に収束する。K=0.01 なら帯の開始位置の100px上。
+# GROUND_RENDER_OFFSET_Y とは独立に選べる。横倍率を scale(dy) = a * (OFFSET + dy) と
+# 置くと、テクスチャがワールド上で占める幅は texture_width * a * CAMERA_HEIGHT となり、
+# dy にも OFFSET にも依存しない定数になる。一方、流線が収束するのは scale(dy)=0 すなわち
+# dy=-OFFSET（＝ちょうど地平線）で、これは a に依存しない。つまり:
+#     OFFSET … 帯のカバー範囲と、消失点が地平線に乗ること
+#     この値 … 模様の細かさ（＝手前でどれだけ拡大＝ボケるか）
+# の2つが完全に分離している。小さくすると模様が細かくなりボケにくくなるが、上端の
+# 折り返し量が増える（ミップマップが吸収するので破綻はせず、単に早くボケ始める）。
 #
-# 幾何学的に正しくは、この収束点は地平線になければならない。帯は地平線の
-# GROUND_RENDER_OFFSET_Y px 下から始まるので、本来は K = 1/GROUND_RENDER_OFFSET_Y
-# （＝1/17≒0.059）が要る。現在の 0.01 は「帯が地平線の100px下から始まる」前提の値で、
-# 実際の開始位置(17px下)と食い違っている。このため地面の遠近は幾何学的に必要な強さの
-# 約1/4.6しかなく（最下段の倍率が3.8倍、本来は17.6倍）、道路とは流れの角度が合わない。
-#
-# K と GROUND_RENDER_OFFSET_Y は独立に選べず、K = 1/GROUND_RENDER_OFFSET_Y を満たす必要が
-# ある。そのとき最下段の倍率は (SCREEN_HEIGHT - HORIZON_Y) / GROUND_RENDER_OFFSET_Y になり、
-# 「帯が画面のどこから始まるか」と「テクスチャがどれだけ拡大＝ボケるか」は一本のトレード
-# オフになる（17px下から→17.6倍、100px下から→3倍）。現状はこれを崩して両取りしている。
-# 値の変更は帯の開始位置とステージ毎の bg_offset_y・グラデーション高さの再調整を伴うため、
-# ここでは既存の見た目を維持して 0.01 のままにしてある。
-GROUND_PERSPECTIVE_K = 0.01
+# 24000 は等方（テクスチャの縦横がワールド上で同じ縮尺＝画像が歪まない）の値。
+# 旧実装の実効値は約41800相当で、模様が奥へ1.74倍引き伸ばされていた。
+GROUND_TEXTURE_WORLD_WIDTH = 24000.0
 
 # --- Gradient Smoothing Config ---
 GRADIENT_HEIGHT = 20  # グラデーション帯の高さ（上段、50%縮小）
@@ -115,10 +123,10 @@ class BackgroundLayer:
         screen.set_clip(None)
 
 class GroundLayer:
-    # 横方向は自前の状態を持たない。消失点シフトは draw() の road_x_offset（＝道路が
-    # 帯の最上段を貫く画面位置）だけで決まる。BackgroundLayer のような時間積分では
-    # ないため、直線では必ず中央へ戻り、道路の曲がりと一致する。
-    def __init__(self, image_path, factor_y_speed, screen_width, screen_height):
+    # スクロールの状態を一切持たない。横は draw() の road_x_offset（＝道路が帯の最上段を
+    # 貫く画面位置）、縦は player_z だけで決まる純粋な関数になっている。BackgroundLayer の
+    # ような時間積分ではないため、直線では必ず中央へ戻り、フレームレートにも依存しない。
+    def __init__(self, image_path, screen_width, screen_height):
         # Load source and crop bottom section
         src_img = pygame.image.load(image_path).convert()
         
@@ -141,25 +149,25 @@ class GroundLayer:
         self.height = self.image.get_height()
         self.screen_width = screen_width
         self.screen_height = screen_height
-        
+
+        # 縦ミップマップ。帯の上端は1ストリップ(2px)でテクスチャを200テクセル以上飛ばすため、
+        # 素直に点サンプルすると激しく折り返す。縦を半分ずつ面積平均した列を作っておき、
+        # 描画時に飛ばす量に見合うレベルから読むことで、正しいフィルタ結果が1回のblitで得られる。
+        # 横は縮まないので模様の左右の形は保たれる。生成は読み込み時の一度きり。
+        # level n のテクセル1行 ≒ 元テクスチャの 2^n 行分。
+        self.mips = [self.image]
+        h = self.height
+        while h > 1:
+            h = max(1, h // 2)
+            self.mips.append(pygame.transform.smoothscale(self.mips[-1], (self.width, h)))
+
         # Use centralized constant for Y drawing start position
         self.start_y = HORIZON_Y + GROUND_RENDER_OFFSET_Y
-        
-        self.scroll_y = 0.0
-
-        self.factor_y_speed = factor_y_speed # Speed multiplier for Y scroll
 
     def set_start_y(self, y):
         self.start_y = y
 
-    def update(self, dt, player_speed):
-        # Y: Speed Link (Forward Motion -> Texture moves Down)
-        # To make texture move DOWN (approach player), we need the source sampling window to move UP.
-        # Moving window UP means decreasing src_y.
-        # So scroll_y should decrease.
-        self.scroll_y -= player_speed * self.factor_y_speed * dt
-
-    def draw(self, screen, pitch_offset_y=0, road_x_offset=0.0):
+    def draw(self, screen, pitch_offset_y=0, road_x_offset=0.0, player_z=0.0):
         # Raster Effect Loop for Perspective (Pseudo-3D)
 
         # Apply pitch to start_y
@@ -167,7 +175,10 @@ class GroundLayer:
         # Positive pitch -> Horizon moves down -> start_y moves down
         current_start_y = self.start_y + int(pitch_offset_y)
 
-        k = GROUND_PERSPECTIVE_K
+        # 帯の上端が「地面の地平線」から何px下か。ピッチは地平線ごと帯を動かす見立て
+        # なので、ピッチ抜きの start_y から求める（結果としてFOEは地平線+ピッチに乗る）。
+        offset = self.start_y - HORIZON_Y
+        if offset <= 0: return
 
         strip_height = 2 # Performance vs Quality tradeoff. 2px is decent.
 
@@ -181,77 +192,98 @@ class GroundLayer:
         center_x = self.screen_width // 2
 
         # 流れの消失点(FOE)を道路に係留する。
-        # 全流線は dy=-1/k で一点に収束し（GROUND_PERSPECTIVE_K の説明を参照）、その画面xは
-        #     FOE_x = center_x + vp * (1 + 1/(k*H))        … H = target_height
-        # になる。これを「道路が帯の最上段を貫く位置」center_x + road_x_offset に一致させる:
-        #     road_x_offset = vp * (1 + 1/(k*H))  →  vp = road_x_offset * kH/(kH+1)
+        # 横倍率を scale(dy) = a*(offset+dy) と置くと、全流線は scale(dy)=0 となる
+        # dy=-offset（＝ちょうど地平線）で一点に収束する。その画面xは
+        #     FOE_x = center_x + vp * (1 + offset/H)        … H = target_height
+        # なので、これを「道路が帯の最上段を貫く位置」center_x + road_x_offset に一致させる:
+        #     vp = road_x_offset * H / (H + offset)
         # こうするとFOEが道路の上に乗るので、道路の左の地面は左下へ、右の地面は真下〜右下へと
         # 道路から離れる向きに扇状に流れる。道路へ横から滑り込む帯ができない。
+        # a に依存しない（模様の細かさを変えても係留は保たれる）。
         # H はピッチで変わるため、ここ（描画時）で計算する必要がある。
-        kH = k * target_height
-        vp = road_x_offset * kH / (kH + 1.0)
+        vp = road_x_offset * target_height / (target_height + offset)
 
-        # 累積的アプローチ：スクロール開始位置から累積的にサンプリング
-        # scroll_y をモジュロで正規化した位置から開始
-        base_src_y = self.scroll_y % self.height  # 開始位置（負対応）
-        cumulative_src_y = base_src_y
-        
+        # 横倍率の係数 a。テクスチャ幅がワールド上で GROUND_TEXTURE_WORLD_WIDTH 単位を
+        # 占めるように決める（導出は定数の説明を参照）。
+        a = GROUND_TEXTURE_WORLD_WIDTH / (self.width * CAMERA_HEIGHT)
+
+        # テクスチャの縦サンプリング。行dyが映すワールド奥行きは
+        #     z(dy) = CAMERA_HEIGHT * PROJECTION_PLANE_DIST / (offset + dy)
+        # なので、テクスチャ座標はその絶対ワールド位置に比例させればよい。閉じた式なので
+        # 累積和が要らず、誤差の蓄積もフレームレート依存もない（旧実装は dt で積分した
+        # scroll_y を使っていたため、fpsが落ちると道路の進みに対し地面だけが速く流れた）。
+        # 符号を反転しているのは、テクスチャのv軸を手前向き（画面下へ進むほどvが増える）に
+        # 保つため。画像の上下の向きが従来と変わらない。
+        depth_numerator = CAMERA_HEIGHT * PROJECTION_PLANE_DIST
+        texels_per_world = self.width / GROUND_TEXTURE_WORLD_WIDTH
+
         for dy in range(0, target_height, strip_height):
-            # 1. Calculate Scale
-            # Scale increases as we go down (dy increases)
-            scale = 1.0 + (dy * k)
-            
-            # 2. 消失点シフト計算（カーブ対応）
+            # 1. 消失点シフト計算（カーブ対応）
             # 上（dy=0）ほど強く、下（dy=target_height）ほど弱い
             shift = vp * (1.0 - dy / target_height)
 
-            # 3. Source Strip Y - 累積的アプローチ（ジャンプ防止）
-            # 奥行きに応じたサンプリング増分を計算
-            # dyが小さい（遠方）→ zが大きい → 増分小（テクスチャ密に読む）
-            # dyが大きい（手前）→ zが小さい → 増分大（テクスチャまばらに読む）
-            # 増分係数：手前ほど大きく増分（テクスチャをスキップ）
-            # 基準はdy=target_height/2のラインで1.0
-            increment_factor = (target_height / 2) / max(1, dy + 1)
-            
-            # 現在の累積位置をモジュロで正規化
-            src_y = int(cumulative_src_y % self.height)
-            
-            # 次のラインへの増分を加算
-            # strip_height * increment_factor でテクスチャ上の移動量を計算
-            cumulative_src_y += strip_height * increment_factor
-            
-            # 4. Handle Wrap-Around for Strip Height
-            current_strip_h = int(min(strip_height, target_height - dy))
-            
-            # Source Rect
-            # We need to handle if src_y + strip_h > self.height
-            
-            if src_y + current_strip_h > self.height:
-                # Part A (End of image)
-                h_a = int(self.height - src_y)
-                self._draw_strip(screen, dy, h_a, src_y, scale, center_x, pitch_offset_y, shift)
+            # 2. Calculate Scale
+            # Scale increases as we go down (dy increases)
+            # 帯の上端はテクスチャが画面幅に届かない。水平線の行(z=26471)は画面幅で
+            # ワールド70588単位を映すのに対しテクスチャ1枚は24000単位ぶんしかなく、
+            # 原理的に約3枚分足りない。さらに消失点シフトで横へずれるため、ずれた先でも
+            # 左右端を覆う必要がある（覆えないと隙間から背景画像が覗き、地平線の霧が
+            # 途中で切れて見える。大きなカーブでは左端に最大260px以上の隙間が出た）。
+            # strip は center_x+shift を中心に width*scale で描かれるので、
+            #   左端<=0 かつ 右端>=screen_width には
+            #   width*scale >= 2*max(center_x+shift, screen_width-center_x-shift)
+            # が要る。+2 は dest_x 側の整数丸めで1px欠けるのを防ぐ余裕。
+            # 引き伸ばす分だけ横方向の遠近は嘘になるが、該当するのは上端のごく一部で、
+            # そこはミップマップがほぼ平均色まで潰しているため模様が無く見た目に出ない。
+            min_width = 2.0 * max(center_x + shift,
+                                  self.screen_width - center_x - shift) + 2.0
+            scale = max(a * (offset + dy), min_width / self.width)
 
-                
+            # 3. Source Strip Y - この行が映すワールド奥行きから直接求める
+            world_z = player_z + depth_numerator / (offset + dy)
+            v = -world_z * texels_per_world
+
+            # 4. ミップレベル選択。このストリップが跨ぐテクセル数 |dv| を strip_height 行で
+            # 読むので、1行あたり |dv|/strip_height テクセル分を平均したレベルが要る。
+            # level n の1行が元テクスチャの 2^n 行分にあたるので n = log2(|dv|/strip_height)。
+            dv = strip_height * texels_per_world * depth_numerator / ((offset + dy) ** 2)
+            level = 0
+            if dv > strip_height:
+                level = min(len(self.mips) - 1, int(math.log2(dv / strip_height) + 0.5))
+            mip = self.mips[level]
+            mip_h = mip.get_height()
+            src_y = int(v * mip_h / self.height) % mip_h
+
+            # 5. Handle Wrap-Around for Strip Height
+            current_strip_h = int(min(strip_height, target_height - dy))
+
+            # Source Rect
+            # We need to handle if src_y + strip_h > mip_h
+
+            if src_y + current_strip_h > mip_h:
+                # Part A (End of image)
+                h_a = int(mip_h - src_y)
+                self._draw_strip(screen, mip, dy, h_a, src_y, scale, center_x, pitch_offset_y, shift)
+
                 # Part B (Start of image)
                 h_b = int(current_strip_h - h_a)
-                self._draw_strip(screen, dy + h_a, h_b, 0, scale, center_x, pitch_offset_y, shift)
+                self._draw_strip(screen, mip, dy + h_a, h_b, 0, scale, center_x, pitch_offset_y, shift)
             else:
 
                 # Single part
-                self._draw_strip(screen, dy, current_strip_h, src_y, scale, center_x, pitch_offset_y, shift)
+                self._draw_strip(screen, mip, dy, current_strip_h, src_y, scale, center_x, pitch_offset_y, shift)
 
-    def _draw_strip(self, screen, dy, h, src_y, scale, center_x, pitch_offset_y, shift=0.0):
+    def _draw_strip(self, screen, mip, dy, h, src_y, scale, center_x, pitch_offset_y, shift=0.0):
         if h <= 0: return
 
-        
         # Extract Strip
-        # Full width of the source image
+        # Full width of the source image (mip は縦だけ縮んでいるので幅は self.width のまま)
         src_rect = pygame.Rect(0, src_y, self.width, h)
         try:
-            strip_surf = self.image.subsurface(src_rect)
+            strip_surf = mip.subsurface(src_rect)
         except ValueError:
-            return 
-        
+            return
+
         # Scale Strip
         # New width = self.width * scale
         new_width = int(self.width * scale)
@@ -354,7 +386,7 @@ class BackgroundManager:
             
             # Experimental Ground Layer initialization
             # Use dedicated ground file if available
-            self.ground_layer = GroundLayer(ground_file, 2.3, self.screen_width, self.screen_height)  # 2.3x speed
+            self.ground_layer = GroundLayer(ground_file, self.screen_width, self.screen_height)
             # Sync with current dynamic offset
             self.ground_layer.set_start_y(HORIZON_Y + self.ground_offset)
 
@@ -390,10 +422,7 @@ class BackgroundManager:
     def update(self, dt, curve_value, player_speed):
         for layer in self.layers:
             layer.update(dt, curve_value, player_speed)
-        
-        if self.ground_layer:
-            # 地面は縦スクロールのみ状態を持つ（横は set_road_anchor 経由で描画時に決まる）
-            self.ground_layer.update(dt, player_speed)
+        # GroundLayer は状態を持たない（縦は player_z、横は road_x_offset から描画時に決まる）
     
     def _interpolate_color(self, c1, c2, t):
         """線形補間で2色を混合"""
@@ -418,20 +447,17 @@ class BackgroundManager:
             return (100, 100, 100)
     
     def _sample_ground_color(self):
-        """GroundLayerの平均的な色をサンプリング（スクロールに連動しない固定色）"""
+        """GroundLayerの平均的な色を返す（スクロールに連動しない固定色）
+
+        最も粗いミップ（高さ1px＝テクスチャを縦に全平均したもの）の中央列を読む。
+        帯の上端は遠方ほど強いミップが効いてこの色そのものへ収束するので、グラデーション帯を
+        同じ色で作れば継ぎ目が出ない。以前は3点を拾う近似で、真の平均と数階調ずれていた。
+        """
         if not self.ground_layer:
             return (80, 60, 40)
         try:
-            # テクスチャの複数ポイントからサンプリングして平均色を取得（ちらつき防止）
-            samples = []
-            for sample_y in [0, self.ground_layer.height // 4, self.ground_layer.height // 2]:
-                color = self.ground_layer.image.get_at((self.ground_layer.width // 2, sample_y))[:3]
-                samples.append(color)
-            # 平均色を計算
-            avg_r = sum(c[0] for c in samples) // len(samples)
-            avg_g = sum(c[1] for c in samples) // len(samples)
-            avg_b = sum(c[2] for c in samples) // len(samples)
-            return (avg_r, avg_g, avg_b)
+            coarsest = self.ground_layer.mips[-1]
+            return coarsest.get_at((self.ground_layer.width // 2, 0))[:3]
         except Exception as e:
             from .logger import log_warn
             log_warn(f"_sample_ground_color failed: {e}")
@@ -641,7 +667,8 @@ class BackgroundManager:
         self._draw_gradient_band(screen, combined_offset)
         
         if self.ground_layer:
-            self.ground_layer.draw(screen, combined_offset, self.road_x_offset)
+            self.ground_layer.draw(screen, combined_offset, self.road_x_offset,
+                                   player_z if player_z is not None else 0.0)
 
         
         # 下段グラデーションを描画（GroundLayerの後）
