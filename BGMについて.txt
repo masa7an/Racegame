@@ -3,12 +3,8 @@ by
 masa7an powerd with Suno AI
 sunoに課金しちゃったライセンス持ち
 
-エンジン音はGeminiとChatGPTにコードを出してもらって作成
-した気がするのですが、
-うろ覚えなので、念のため削除
-
 [2026-07-18 追記]
-エンジン音を作り直した。現在の engine_low.wav / engine_mid.wav /
+エンジン音をFabe5で作り直した。現在の engine_low.wav / engine_mid.wav /
 engine_high.wav は project/engine_sound_gen/generate_engine.py で
 コード生成した完全自作品（低速=のこぎり波シンセ、高速=点火パルス合成、
 中速=両者のブレンド）。第三者素材は不使用で権利問題なし。
