@@ -1,10 +1,8 @@
-使用フリー音源
+Turbo apex
+by
+masa7an powerd with Suno AI
+sunoに課金しちゃったライセンス持ち
 
-「楽曲制作（Experimental Model）: d-elf.com」
-https://www.d-elf.com/archives/4196.html
-
-をお借りしました。
-ありがとうございます。
-
-なぜプロ級の人がタダで音楽を配っているのか、
-不思議な世の中です。
+エンジン音はGeminiとChatGPTにコードを出してもらって作成
+した気がするのですが、
+うろ覚えなので、念のため削除
