@@ -2,7 +2,7 @@
 
 A retro-style pseudo-3D racing game built with Python and Pygame.
 
-![Version](https://img.shields.io/badge/Version-1.1-orange.svg)
+![Version](https://img.shields.io/badge/Version-1.2-orange.svg)
 ![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)
 ![Pygame](https://img.shields.io/badge/Pygame-2.0+-green.svg)
 
