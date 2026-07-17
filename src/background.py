@@ -31,9 +31,16 @@ GROUND_RENDER_OFFSET_Y = 17
 # の2つが完全に分離している。小さくすると模様が細かくなりボケにくくなるが、上端の
 # 折り返し量が増える（ミップマップが吸収するので破綻はせず、単に早くボケ始める）。
 #
-# 24000 は等方（テクスチャの縦横がワールド上で同じ縮尺＝画像が歪まない）の値。
-# 旧実装の実効値は約41800相当で、模様が奥へ1.74倍引き伸ばされていた。
-GROUND_TEXTURE_WORLD_WIDTH = 24000.0
+# 現実装では縦横ともこの1定数から縮尺が決まるため、どの値でも等方（画像は歪まない）。
+# （旧実装は縦だけ別係数で、横24000相当・縦41800相当の異方だった）
+#
+# 41800 にしている理由（既知の問題②対策、2026-07-18）: 24000 だと模様が細かく、
+# 中間距離の外向き拡大流（毎フレーム5〜10px）に対して周期が2倍未満の模様が大量に
+# 残り、時間エイリアシングで細かい模様だけが逆走・内向きに滑って見えた
+# （「地面が中央へ吸い寄せられる」錯視。縦ブラーでは消えないことを実機で確認済み）。
+# 41800 では模様が1.74倍大きくなり、1フレームのテクセル前進も10.8→6.2に減るため、
+# エイリアシング域のエネルギーが大幅に減る。縦の縮尺・スクロール速度は旧実装と同じ。
+GROUND_TEXTURE_WORLD_WIDTH = 41800.0
 
 # --- Gradient Smoothing Config ---
 GRADIENT_HEIGHT = 20  # グラデーション帯の高さ（上段、50%縮小）
@@ -149,6 +156,10 @@ class GroundLayer:
         self.height = self.image.get_height()
         self.screen_width = screen_width
         self.screen_height = screen_height
+
+        # 縮小ストリップの横アンチエイリアシング（既知の問題②対策）。
+        # デバッグキーMのA/B比較用フラグで、恒久的にはTrue運用。
+        self.antialias = True
 
         # 縦ミップマップ。帯の上端は1ストリップ(2px)でテクスチャを200テクセル以上飛ばすため、
         # 素直に点サンプルすると激しく折り返す。縦を半分ずつ面積平均した列を作っておき、
@@ -288,8 +299,16 @@ class GroundLayer:
         # New width = self.width * scale
         new_width = int(self.width * scale)
         if new_width <= 0: return
-        
-        scaled_strip = pygame.transform.scale(strip_surf, (new_width, h))
+
+        # 縮小時(new_width < 元幅)は smoothscale（面積平均）を使う（既知の問題②対策）。
+        # ニアレスト(scale)での縮小は列の間引きになり、フレーム毎に違う列が落ちて
+        # 偽の細かいチラつきを生む。この偽HFが外向き拡大流の時間エイリアシングの
+        # 主要因の一つだった（細かい模様だけ逆走・内向きに滑って見える）。
+        # 拡大時は従来どおりニアレスト（近景のくっきり感を維持。bilinearだと眠くなる）。
+        if new_width < self.width and self.antialias:
+            scaled_strip = pygame.transform.smoothscale(strip_surf, (new_width, h))
+        else:
+            scaled_strip = pygame.transform.scale(strip_surf, (new_width, h))
         
         # Draw Centered with Curve Shift（消失点シフト適用）
         dest_x = center_x - (new_width // 2) + int(shift)

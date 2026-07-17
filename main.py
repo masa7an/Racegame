@@ -228,6 +228,17 @@ def main():
                             bg_manager.adjust_ground_offset(1)
                         elif event.key == pygame.K_j:
                             bg_manager.adjust_ground_offset(-1)
+                        elif event.key == pygame.K_m:
+                            # 既知の問題②のA/B比較: 地面テクスチャの
+                            # 新(41800+smoothscale縮小) ⇔ 旧(24000+nearest) を切替
+                            from src import background as bg_mod
+                            gl = bg_manager.ground_layer
+                            if gl:
+                                gl.antialias = not gl.antialias
+                                bg_mod.GROUND_TEXTURE_WORLD_WIDTH = (
+                                    41800.0 if gl.antialias else 24000.0)
+                                log_info(f"Ground mode: "
+                                         f"{'NEW(41800+smooth)' if gl.antialias else 'OLD(24000+nearest)'}")
                     # </DEBUG>
 
                     if event.key == pygame.K_0:
