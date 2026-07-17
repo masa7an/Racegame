@@ -36,6 +36,9 @@ TUNNEL_ARC_SEGMENTS_MAX = 24                       # 至近距離での分割数
 TUNNEL_ARCH_COLOR = (55, 53, 57)                   # アーチ全体の色（単色、陰影なし）
 TUNNEL_FLOOR_COLOR = (72, 70, 74)                  # 路肩の床色（コンクリート想定。道路端〜アーチ根元を埋める）
 TUNNEL_FOG_COLOR = (14, 14, 17)                    # トンネル奥の到達色（通常フォグの代わりに暗闇へフェード）
+TUNNEL_SHADOW_SOFTEN = 1.6                         # 内部の明暗境界(手前=入口付近の明るさ/奥=暗闇)をぼかす倍率。
+                                                   # fog_pctをこの値で割ってから使うことで暗闇へ落ちる距離を
+                                                   # 伸ばし、境目のグラデーションを緩やかにする
 
 # Tunnel Entrance Portal (入口の厚み — 薄い板に見えないよう小口面を描く)
 # 入口面に外枠アーチ（半径+厚み）と内枠アーチ（＝坑内の弧）の二重ポリゴンを取り、間を埋める。
@@ -765,9 +768,12 @@ class Track:
              # Use specific road fog color if defined, else global fog color
              if in_tunnel:
                  target_fog = TUNNEL_FOG_COLOR
+                 # トンネル内部の明暗境界(手前の明るさ→奥の暗闇)をぼかし、影の遷移範囲を広げる
+                 tunnel_fog_pct = min(1.0, fog_pct / TUNNEL_SHADOW_SOFTEN)
              else:
                  target_fog = cfg.get('road_fog_color', fog_color)
-             poly_color = Track.interpolate_color(seg['color'], target_fog, fog_pct)
+                 tunnel_fog_pct = fog_pct
+             poly_color = Track.interpolate_color(seg['color'], target_fog, tunnel_fog_pct)
 
              # Draw Poly
              w1 = ROAD_WORLD_WIDTH * s1
@@ -793,7 +799,7 @@ class Track:
              # アーチの根元（±TUNNEL_HALF_WIDTH）まで床を敷き、道路端の外に見えていた
              # 背景の地面（草）を隠す。道路ポリゴンより先に描き、路面・縁石で中央を上書きさせる。
              if in_tunnel:
-                 floor_color = Track.interpolate_color(TUNNEL_FLOOR_COLOR, TUNNEL_FOG_COLOR, fog_pct)
+                 floor_color = Track.interpolate_color(TUNNEL_FLOOR_COLOR, TUNNEL_FOG_COLOR, tunnel_fog_pct)
                  fw1 = TUNNEL_HALF_WIDTH * s1
                  fw2 = TUNNEL_HALF_WIDTH * s2
                  pygame.draw.polygon(screen, floor_color, [
@@ -919,9 +925,9 @@ class Track:
                  # Curb colors based on segment index (sync with road stripes)
                  base_curb_color = CURB_RED if (seg['index'] % 2 == 0) else CURB_WHITE
                  # Apply fog to curb color
-                 curb_color = Track.interpolate_color(base_curb_color, target_fog, fog_pct)
+                 curb_color = Track.interpolate_color(base_curb_color, target_fog, tunnel_fog_pct)
                  # Border color with fog
-                 border_color = Track.interpolate_color(CURB_BORDER_COLOR, target_fog, fog_pct)
+                 border_color = Track.interpolate_color(CURB_BORDER_COLOR, target_fog, tunnel_fog_pct)
                  
                  # Determine which sides to draw curbs
                  seg_z = seg['p1']['z']
@@ -974,7 +980,7 @@ class Track:
              # トンネルへの近さからフレーム単位で決まる。
              # フォグは通常のfog_colorではなく暗闇(TUNNEL_FOG_COLOR)へフェードさせる。
              if in_tunnel:
-                 arch_color = Track.interpolate_color(TUNNEL_ARCH_COLOR, TUNNEL_FOG_COLOR, fog_pct)
+                 arch_color = Track.interpolate_color(TUNNEL_ARCH_COLOR, TUNNEL_FOG_COLOR, tunnel_fog_pct)
 
                  def tunnel_arc_pt(theta, x, y, s, hw=TUNNEL_HALF_WIDTH, h=TUNNEL_HEIGHT):
                      return (x + hw * math.cos(theta) * s, y - h * math.sin(theta) * s)
@@ -995,9 +1001,9 @@ class Track:
                  # 天井ライト: 頂点(theta=pi/2)から左右に離した2灯を、弧の分割とは独立した角度で重ね描き
                  light_on = (seg['index'] % TUNNEL_LIGHT_SPACING) < TUNNEL_LIGHT_ON_LENGTH
                  if light_on:
-                     light_color = Track.interpolate_color(TUNNEL_LIGHT_COLOR, TUNNEL_FOG_COLOR, fog_pct)
+                     light_color = Track.interpolate_color(TUNNEL_LIGHT_COLOR, TUNNEL_FOG_COLOR, tunnel_fog_pct)
                      # 発光色は奥ほど黒へ落とす（黒＝発光なしなので、奥のライトのにじみが自然に弱まる）
-                     glow_color = Track.interpolate_color(TUNNEL_LIGHT_COLOR, (0, 0, 0), fog_pct)
+                     glow_color = Track.interpolate_color(TUNNEL_LIGHT_COLOR, (0, 0, 0), tunnel_fog_pct)
                      for side in (-1, 1):
                          center_theta = math.pi / 2 + side * TUNNEL_LIGHT_CENTER_OFFSET
                          t0 = center_theta - TUNNEL_LIGHT_HALF_ANGLE
