@@ -8,6 +8,14 @@ GROUND_RENDER_OFFSET_Y = 17 # Adjusts the Y start position of the ground layer r
 GRADIENT_HEIGHT = 20  # グラデーション帯の高さ（上段、50%縮小）
 GRADIENT_HEIGHT_2 = 40  # 2段目の緩いグラデーションの高さ
 
+# --- Tunnel Haze Fade Config ---
+# トンネル区間では地平線付近の霧・グラデーション帯がアーチ/山のシルエットと
+# 噛み合わず不自然に見えるため、入口/出口の手前からフェードアウトする。
+# アーチが画面を覆い始める前に消え終わるよう、境界からHIDE_MARGINだけ
+# 離れた位置でフェードが完了する（境界±HIDE_MARGINの範囲は完全非表示）。
+TUNNEL_HAZE_FADE_DISTANCE = 3000.0
+TUNNEL_HAZE_HIDE_MARGIN = 1500.0
+
 class BackgroundLayer:
     def __init__(self, image_path, scroll_factor_x, scroll_factor_y, screen_width, screen_height, base_y_offset=0):
         self.image = pygame.image.load(image_path).convert()
@@ -398,6 +406,29 @@ class BackgroundManager:
             log_warn(f"_sample_ground_color failed: {e}")
             return (80, 60, 40)
     
+    def _compute_tunnel_haze_mult(self, player_z):
+        """トンネル入口手前〜区間内〜出口後にかけて、地平線ヘイズの不透明度倍率(0〜1)を計算"""
+        if player_z is None:
+            return 1.0
+        cfg = STAGE_CONFIG.get(self.current_stage_id, {})
+        tunnel_start = cfg.get('tunnel_start_z')
+        if tunnel_start is None:
+            return 1.0
+        tunnel_end = tunnel_start + cfg.get('tunnel_length', 0.0)
+        fade = TUNNEL_HAZE_FADE_DISTANCE
+        # 完全非表示になる境界（入口手前/出口先のマージン込み）
+        hide_start = tunnel_start - TUNNEL_HAZE_HIDE_MARGIN
+        hide_end = tunnel_end + TUNNEL_HAZE_HIDE_MARGIN
+        if player_z < hide_start - fade:
+            return 1.0
+        if player_z < hide_start:
+            return (hide_start - player_z) / fade
+        if player_z < hide_end:
+            return 0.0
+        if player_z < hide_end + fade:
+            return (player_z - hide_end) / fade
+        return 1.0
+
     def _draw_gradient_band(self, screen, pitch_offset):
         """GroundLayer開始位置の手前に2段階グラデーション帯を描画（透明度付き）"""
         if not self.layers or not self.ground_layer:
@@ -433,7 +464,7 @@ class BackgroundManager:
             color = self._interpolate_color(top_color, blended_bottom_color, t)
             # 上端は透明、下端は半透明（非線形：上側が薄く、下側が濃い）
             fade = t ** 2  # 2乗で上側が薄く、下側が濃い
-            alpha = int(fade * 180)  # 下グラデと同じ180に統一
+            alpha = int(fade * 180 * self._tunnel_haze_mult)  # 下グラデと同じ180に統一
             pygame.draw.line(gradient_surface, (*color, alpha), (0, i), (self.screen_width, i))
         screen.blit(gradient_surface, (0, gradient_start_y))
         
@@ -493,7 +524,7 @@ class BackgroundManager:
             t = i / float(height)  # 0.0 ~ 1.0
             # 下段は非線形フェードアウト（2乗減衰：上側が濃く、下側が長く薄い）
             fade = (1.0 - t) ** 2
-            alpha = int(fade * 180)  # 最大180で強めに
+            alpha = int(fade * 180 * self._tunnel_haze_mult)  # 最大180で強めに
             pygame.draw.line(gradient_surface, (*blended_color, alpha), (0, i), (self.screen_width, i))
         screen.blit(gradient_surface, (0, start_y))
     
@@ -514,11 +545,11 @@ class BackgroundManager:
             t = i / float(fog_height)  # 0.0 ~ 1.0
             # 不透明から透明へ非線形フェードアウト（2乗減衰で下部が長く薄い）
             fade = (1.0 - t) ** 2  # 2乗で上部は濃く、下部は長く薄く
-            alpha = int(fade * 100)  # 最大100で強めに
+            alpha = int(fade * 100 * self._tunnel_haze_mult)  # 最大100で強めに
             pygame.draw.line(fog_surface, (*fog_color, alpha), (0, i), (self.screen_width, i))
         screen.blit(fog_surface, (0, fog_start_y))
             
-    def draw(self, screen, pitch_offset=0):
+    def draw(self, screen, pitch_offset=0, player_z=None):
         # 道路カメラ高さと勾配ピッチのオフセットを合成
         # camera_y_offset: 道路の消失点変化（高さ由来）
         # pitch_offset: 勾配による背景の上下移動
@@ -527,6 +558,9 @@ class BackgroundManager:
         combined_offset = max(-15.0, min(15.0, raw_combined))
         # デバッグ用に生の値も保持
         self._debug_raw_combined = raw_combined
+
+        # トンネル区間では地平線ヘイズ（上段/下段グラデ・霧グラデ）を手前からフェードアウト
+        self._tunnel_haze_mult = self._compute_tunnel_haze_mult(player_z)
         
         for layer in self.layers:
             layer.draw(screen, pitch_offset)  # 背景レイヤーは従来通り

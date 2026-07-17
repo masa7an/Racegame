@@ -613,18 +613,18 @@ def main():
             # フィルタ済みの勾配を使用（道路のカメラ高さと同期）
             pitch_offset = -smoothed_slope * 300.0 
             
-            bg_manager.draw(screen, pitch_offset=pitch_offset)
+            bg_manager.draw(screen, pitch_offset=pitch_offset, player_z=car.z)
 
 
-            
+
             # 2. Track
             # Safer background fill
             bg_sky, bg_ground = track.get_bg_colors(render_stage_id)
             pygame.draw.rect(screen, bg_sky, (0, 0, SCREEN_WIDTH, HORIZON_Y))
             pygame.draw.rect(screen, bg_ground, (0, HORIZON_Y, SCREEN_WIDTH, SCREEN_HEIGHT - HORIZON_Y))
-            
+
             # Re-draw BG over fill (BG manager handles transparency naturally)
-            bg_manager.draw(screen, pitch_offset=pitch_offset)
+            bg_manager.draw(screen, pitch_offset=pitch_offset, player_z=car.z)
 
             
             current_fog_color = bg_manager.get_fog_color(render_stage_id)
@@ -635,15 +635,18 @@ def main():
                 bg_manager.set_curve_offset(accumulated_curve)
             
             # [TEST] 道路描画後の霧オーバーレイ（水平線近くを馴染ませる）
-            if current_fog_color:
+            # トンネル区間では背景側のヘイズと同じ倍率でフェードアウトさせる
+            # （最前面に描かれるため、残るとアーチ・山の上に霧の帯が浮いて見える）
+            tunnel_haze_mult = getattr(bg_manager, '_tunnel_haze_mult', 1.0)
+            if current_fog_color and tunnel_haze_mult > 0.0:
                 fog_overlay_height = 80  # 水平線から80px下まで
                 fog_overlay = pygame.Surface((SCREEN_WIDTH, fog_overlay_height), pygame.SRCALPHA)
                 for i in range(fog_overlay_height):
                     # 非線形グラデーション（三乗で上が濃く下が薄い）
                     t = i / float(fog_overlay_height)  # 0 (top) to 1 (bottom)
                     fade = (1.0 - t) ** 3  # 三乗で急激にフェード
-                    alpha = int(fade * 200)  # 最大200（強め）
-                    pygame.draw.line(fog_overlay, (*current_fog_color, alpha), 
+                    alpha = int(fade * 200 * tunnel_haze_mult)  # 最大200（強め）
+                    pygame.draw.line(fog_overlay, (*current_fog_color, alpha),
                                    (0, i), (SCREEN_WIDTH, i))
                 screen.blit(fog_overlay, (0, HORIZON_Y))
             
