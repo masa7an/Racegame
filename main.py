@@ -633,16 +633,15 @@ def main():
             pygame.draw.rect(screen, bg_sky, (0, 0, SCREEN_WIDTH, HORIZON_Y))
             pygame.draw.rect(screen, bg_ground, (0, HORIZON_Y, SCREEN_WIDTH, SCREEN_HEIGHT - HORIZON_Y))
 
+            # カーブ累積値を背景に反映（地面テクスチャの消失点をカーブに連動させる）
+            bg_manager.set_curve_offset(track.get_accumulated_curve(car.z))
+
             bg_manager.draw(screen, pitch_offset=pitch_offset, player_z=car.z)
 
             # 2. Track
             current_fog_color = bg_manager.get_fog_color(render_stage_id)
-            accumulated_curve = track.draw(screen, car.z, car.x, SCREEN_WIDTH, SCREEN_HEIGHT, render_stage_id, current_fog_color, smoothed_camera_y)
-            
-            # カーブ累積値を背景に反映（地面テクスチャの消失点をカーブに連動させる）
-            if accumulated_curve is not None:
-                bg_manager.set_curve_offset(accumulated_curve)
-            
+            track.draw(screen, car.z, car.x, SCREEN_WIDTH, SCREEN_HEIGHT, render_stage_id, current_fog_color, smoothed_camera_y)
+
             # [TEST] 道路描画後の霧オーバーレイ（水平線近くを馴染ませる）
             # 坑口の山が画面に写っている間（トンネル手前ほぼ全域〜内部）は
             # 最前面に霧の帯が浮いて見えるため即座に非表示にする

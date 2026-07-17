@@ -92,7 +92,10 @@ class BackgroundLayer:
         screen.set_clip(None)
 
 class GroundLayer:
-    def __init__(self, image_path, scroll_factor_x, factor_y_speed, screen_width, screen_height):
+    # 横方向は自前の状態を持たない。消失点シフトは draw() の vp_x_offset（＝道路の
+    # カーブ累積値）だけで決まる。BackgroundLayer のような時間積分ではないため、
+    # 直線では必ず中央へ戻り、道路の曲がりと一致する。
+    def __init__(self, image_path, factor_y_speed, screen_width, screen_height):
         # Load source and crop bottom section
         src_img = pygame.image.load(image_path).convert()
         
@@ -119,26 +122,14 @@ class GroundLayer:
         # Use centralized constant for Y drawing start position
         self.start_y = HORIZON_Y + GROUND_RENDER_OFFSET_Y
         
-        self.scroll_x = (screen_width - self.width) / 2.0 # Center
         self.scroll_y = 0.0
-        
-        self.scroll_factor_x = scroll_factor_x
+
         self.factor_y_speed = factor_y_speed # Speed multiplier for Y scroll
 
     def set_start_y(self, y):
         self.start_y = y
-        
-    def update(self, dt, curve_value, player_speed):
-        # X: Curve Link (Same as BG)
-        move_speed = -curve_value * player_speed * self.scroll_factor_x
-        self.scroll_x += move_speed * dt
-        
-        # Clamp X logic (Same as BG)
-        min_x = self.screen_width - self.width
-        max_x = 0
-        if self.scroll_x < min_x: self.scroll_x = min_x
-        elif self.scroll_x > max_x: self.scroll_x = max_x
-        
+
+    def update(self, dt, player_speed):
         # Y: Speed Link (Forward Motion -> Texture moves Down)
         # To make texture move DOWN (approach player), we need the source sampling window to move UP.
         # Moving window UP means decreasing src_y.
@@ -324,7 +315,7 @@ class BackgroundManager:
             
             # Experimental Ground Layer initialization
             # Use dedicated ground file if available
-            self.ground_layer = GroundLayer(ground_file, 0.1, 2.3, self.screen_width, self.screen_height)  # 2.3x speed
+            self.ground_layer = GroundLayer(ground_file, 2.3, self.screen_width, self.screen_height)  # 2.3x speed
             # Sync with current dynamic offset
             self.ground_layer.set_start_y(HORIZON_Y + self.ground_offset)
 
@@ -362,7 +353,8 @@ class BackgroundManager:
             layer.update(dt, curve_value, player_speed)
         
         if self.ground_layer:
-            self.ground_layer.update(dt, curve_value, player_speed)
+            # 地面は縦スクロールのみ状態を持つ（横は set_curve_offset 経由で描画時に決まる）
+            self.ground_layer.update(dt, player_speed)
     
     def _interpolate_color(self, c1, c2, t):
         """線形補間で2色を混合"""

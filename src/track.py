@@ -377,7 +377,22 @@ class Track:
         if 0 <= idx < len(self.segments):
             return self.segments[idx]['curve']
         return 0.0
-        
+
+    def get_accumulated_curve(self, player_z):
+        """描画距離内に見えているセグメントの曲率の総和を返す（背景の消失点オフセット用）。
+
+        draw() の描画ループが積む dx と同じ値。背景は道路より先に描くため、描画とは
+        独立に求められるようにしてある（draw() の戻り値を使うと背景が1フレーム遅れる）。
+        """
+        if not self.segments:
+            return 0.0
+        start_idx = int(player_z / STRIPE_LENGTH)
+        if start_idx >= len(self.segments):
+            start_idx = len(self.segments) - 1
+        num_visible = int(DRAW_DISTANCE / STRIPE_LENGTH)
+        max_idx = min(len(self.segments) - 1, start_idx + num_visible)
+        return sum(self.segments[i]['curve'] for i in range(start_idx, max_idx + 1))
+
     def get_height_at(self, z):
         idx = int(z / STRIPE_LENGTH)
         if 0 <= idx < len(self.segments):
@@ -1198,9 +1213,6 @@ class Track:
         # トンネル天井ライトのにじみを、本体ポリゴンの上からまとめて重ねる
         if tunnel_glow_surf is not None:
             self._blit_tunnel_glow(screen, tunnel_glow_surf)
-
-        # カーブ累積値を返す（背景の消失点オフセットに使用）
-        return dx
 
     def get_bg_colors(self, stage_id):
         cfg = STAGE_CONFIG.get(stage_id, STAGE_CONFIG[1])
